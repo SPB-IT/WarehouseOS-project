@@ -33,7 +33,7 @@ export default function ReturnItemForm() {
     else if (!data) alert('ไม่พบข้อมูล Tracking ID นี้ในระบบ');
     else {
       const activeItems = data.deposit_items?.filter((item: any) => item.remaining_quantity > 0) || [];
-      if (activeItems.length === 0) alert('พัสดุใน Tracking ID นี้ได้ทำการคืนให้ลูกค้าครบหมดแล้ว');
+      if (activeItems.length === 0) alert('พัสดุใน Tracking ID นี้ได้ทำการคืนครบหมดแล้ว');
       else await loadInventoryItems();
     }
     setLoading(false);
@@ -70,7 +70,7 @@ export default function ReturnItemForm() {
 
         const { data: logData, error: logError } = await supabase
           .from('withdrawals')
-          .insert([{ deposit_item_id: item.id, withdraw_quantity: withdrawQty, staff_signature_name: staffName, remark: remark || 'คืนสินค้าให้ลูกค้าเรียบร้อยแล้ว', status: 'completed' }])
+          .insert([{ deposit_item_id: item.id, withdraw_quantity: withdrawQty, staff_signature_name: staffName, remark: remark || 'คืนสินค้าเรียบร้อยแล้ว', status: 'completed' }])
           .select().single();
         if (logError) throw new Error(`บันทึกประวัติล้มเหลว: ${logError.message}`);
         if (logData) createdWithdrawIds.push(logData.id);

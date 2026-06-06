@@ -87,7 +87,7 @@ export default function PrintForm({ params }: { params: Promise<{ id: string }> 
         <p style={{ fontSize: '12px', letterSpacing: '0.15em', color: '#666', margin: '0 0 6px', textTransform: 'uppercase' }}>
           Warehouse Management System
         </p>
-        <h1 style={{ fontSize: '26px', fontWeight: 'bold', margin: '0 0 4px' }}>ใบส่งคืนสินค้าให้ลูกค้า</h1>
+        <h1 style={{ fontSize: '26px', fontWeight: 'bold', margin: '0 0 4px' }}>ใบส่งคืนสินค้า</h1>
         <p style={{ fontSize: '14px', color: '#666', margin: 0 }}>Parcel Return Receipt</p>
         <div style={{ height: '1px', background: '#000', marginTop: '20px' }} />
       </div>
@@ -103,7 +103,7 @@ export default function PrintForm({ params }: { params: Promise<{ id: string }> 
           <p style={{ fontSize: '15px', fontWeight: 'bold', margin: 0 }}>{withdrawDate}</p>
         </div>
         <div style={{ padding: '12px 0' }}>
-          <p style={{ fontSize: '11px', color: '#888', margin: '0 0 3px', letterSpacing: '0.05em', textTransform: 'uppercase' }}>ชื่อผู้รับคืน (ลูกค้า)</p>
+          <p style={{ fontSize: '11px', color: '#888', margin: '0 0 3px', letterSpacing: '0.05em', textTransform: 'uppercase' }}>ชื่อผู้รับคืน</p>
           <p style={{ fontSize: '15px', fontWeight: 'bold', margin: 0 }}>{allCustomerNames || '-'}</p>
         </div>
         <div style={{ padding: '12px 0', textAlign: 'right' }}>
@@ -149,7 +149,7 @@ export default function PrintForm({ params }: { params: Promise<{ id: string }> 
                   </span>
                 </td>
                 <td style={{ padding: '12px', color: '#444' }}>
-                  {item.remark || 'คืนสินค้าพัสดุให้ลูกค้าเรียบร้อยแล้ว'}
+                  {item.remark || 'คืนสินค้าพัสดุเรียบร้อยแล้ว'}
                 </td>
                 <td style={{ padding: '12px', textAlign: 'center', fontWeight: 'bold' }}>{item.withdraw_quantity}</td>
                 <td style={{ padding: '12px', textAlign: 'center', color: '#666' }}>{item.deposit_items?.unit}</td>
@@ -183,7 +183,7 @@ export default function PrintForm({ params }: { params: Promise<{ id: string }> 
         </div>
         <div style={{ textAlign: 'center' }}>
           <div style={{ height: '56px', borderBottom: '0.5px solid #000', marginBottom: '10px' }} />
-          <p style={{ fontSize: '14px', fontWeight: 'bold', margin: '0 0 3px' }}>ลงชื่อผู้รับคืน / ลูกค้า</p>
+          <p style={{ fontSize: '14px', fontWeight: 'bold', margin: '0 0 3px' }}>ลงชื่อผู้รับคืน</p>
           <p style={{ fontSize: '13px', color: '#666', margin: 0 }}>( ................................................ )</p>
           <p style={{ fontSize: '13px', color: '#666', margin: '4px 0 0' }}>วันที่ ........../........../..........​</p>
         </div>

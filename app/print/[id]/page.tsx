@@ -119,7 +119,7 @@ export default function PrintForm({ params }: { params: Promise<{ id: string }> 
 
       {/* Signatures */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '40px' }}>
-        {['ลงชื่อเจ้าหน้าที่รับฝาก', 'ลงชื่อผู้ฝาก / ลูกค้า'].map((label) => (
+        {['ลงชื่อเจ้าหน้าที่รับฝาก', 'ลงชื่อผู้ฝาก'].map((label) => (
           <div key={label} style={{ textAlign: 'center' }}>
             <div style={{ height: '56px', borderBottom: '0.5px solid #000', marginBottom: '10px' }} />
             <p style={{ fontSize: '14px', fontWeight: 'bold', margin: '0 0 3px' }}>{label}</p>
