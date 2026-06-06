@@ -1,0 +1,329 @@
+/* === WarehouseOS Global Theme === */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: #f1f5f9;
+  font-family: 'Sarabun', 'Noto Sans Thai', sans-serif;
+  color: #1e293b;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Page wrapper ── */
+.wh-page {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+
+/* ── Page header ── */
+.wh-page-header {
+  margin-bottom: 1.75rem;
+}
+.wh-page-title {
+  font-size: 1.375rem;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0 0 4px;
+  letter-spacing: -0.3px;
+}
+.wh-page-sub {
+  font-size: 13px;
+  color: #64748b;
+  margin: 0;
+}
+
+/* ── Card ── */
+.wh-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 14px;
+  padding: 1.5rem;
+}
+.wh-card-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #334155;
+  margin: 0 0 1.25rem;
+  padding-bottom: 0.875rem;
+  border-bottom: 1px solid #f1f5f9;
+  letter-spacing: 0.1px;
+  text-transform: uppercase;
+}
+
+/* ── Form inputs ── */
+.wh-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475569;
+  margin-bottom: 6px;
+}
+.wh-input, .wh-textarea, .wh-select {
+  width: 100%;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  color: #1e293b;
+  background: #fff;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.wh-input:focus, .wh-textarea:focus, .wh-select:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+}
+.wh-input::placeholder, .wh-textarea::placeholder { color: #94a3b8; }
+.wh-textarea { resize: vertical; min-height: 68px; }
+
+/* ── Buttons ── */
+.wh-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 9px 18px; border-radius: 8px;
+  font-size: 13.5px; font-weight: 600; font-family: inherit;
+  border: none; cursor: pointer; transition: all 0.15s ease;
+  white-space: nowrap;
+}
+.wh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.wh-btn-primary { background: #2563eb; color: #fff; }
+.wh-btn-primary:hover:not(:disabled) { background: #1d4ed8; }
+.wh-btn-success { background: #16a34a; color: #fff; }
+.wh-btn-success:hover:not(:disabled) { background: #15803d; }
+.wh-btn-danger  { background: #dc2626; color: #fff; }
+.wh-btn-danger:hover:not(:disabled) { background: #b91c1c; }
+.wh-btn-ghost {
+  background: transparent; color: #64748b;
+  border: 1.5px solid #e2e8f0;
+}
+.wh-btn-ghost:hover:not(:disabled) { background: #f8fafc; color: #334155; }
+.wh-btn-full { width: 100%; }
+.wh-btn-lg { padding: 12px 24px; font-size: 15px; border-radius: 10px; }
+
+/* ── Status badges ── */
+.wh-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: 99px;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+}
+.wh-badge-active { background: #dcfce7; color: #15803d; }
+.wh-badge-returned { background: #f1f5f9; color: #64748b; }
+
+/* ── Table ── */
+.wh-table-wrap { overflow-x: auto; }
+.wh-table {
+  width: 100%; border-collapse: collapse;
+  font-size: 13.5px;
+}
+.wh-table thead tr {
+  background: #f8fafc;
+  border-bottom: 1.5px solid #e2e8f0;
+}
+.wh-table th {
+  padding: 11px 16px;
+  font-size: 12px; font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+.wh-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid #f1f5f9;
+  color: #334155;
+  vertical-align: middle;
+}
+.wh-table tbody tr:last-child td { border-bottom: none; }
+.wh-table tbody tr:hover td { background: #f8fafc; }
+
+/* ── Stat cards ── */
+.wh-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+}
+.wh-stat {
+  border-radius: 14px; padding: 1.25rem 1.5rem;
+  position: relative; overflow: hidden;
+}
+.wh-stat-label { font-size: 12.5px; font-weight: 600; opacity: 0.8; margin-bottom: 8px; }
+.wh-stat-value { font-size: 28px; font-weight: 800; letter-spacing: -1px; }
+.wh-stat-unit  { font-size: 14px; font-weight: 500; opacity: 0.7; margin-left: 4px; }
+.wh-stat-blue  { background: linear-gradient(135deg,#2563eb,#1d4ed8); color:#fff; }
+.wh-stat-green { background: linear-gradient(135deg,#16a34a,#15803d); color:#fff; }
+.wh-stat-amber { background: linear-gradient(135deg,#d97706,#b45309); color:#fff; }
+.wh-stat-indigo{ background: linear-gradient(135deg,#4f46e5,#4338ca); color:#fff; }
+
+/* ── Search bar ── */
+.wh-search-bar {
+  display: flex; flex-wrap: wrap; gap: 10px;
+  align-items: center;
+  background: #fff; border: 1px solid #e2e8f0;
+  border-radius: 12px; padding: 14px 16px;
+  margin-bottom: 1.25rem;
+}
+.wh-search-wrap {
+  position: relative; flex: 1; min-width: 200px;
+}
+.wh-search-icon {
+  position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+  color: #94a3b8; pointer-events: none;
+}
+.wh-search-input {
+  width: 100%; border: 1.5px solid #e2e8f0; border-radius: 8px;
+  padding: 8px 12px 8px 36px;
+  font-size: 13.5px; font-family: inherit; color: #1e293b;
+  background: #f8fafc; outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.wh-search-input:focus { border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37,99,235,0.1); background:#fff; }
+
+/* ── Item card (deposit form) ── */
+.wh-item-card {
+  background: #fff; border: 1px solid #e2e8f0;
+  border-left: 4px solid #2563eb;
+  border-radius: 12px; padding: 1.25rem;
+}
+.wh-item-card-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 1rem;
+}
+.wh-item-number {
+  font-size: 12px; font-weight: 700; color: #2563eb;
+  background: #eff6ff; padding: 3px 10px; border-radius: 6px;
+}
+
+/* ── Upload button ── */
+.wh-upload-btn {
+  width: 100%; padding: 12px;
+  background: #f8fafc; border: 1.5px dashed #cbd5e1;
+  border-radius: 8px; color: #64748b;
+  font-size: 13px; font-family: inherit;
+  cursor: pointer; transition: all 0.15s; text-align: center;
+}
+.wh-upload-btn:hover { background: #eff6ff; border-color: #93c5fd; color: #2563eb; }
+.wh-upload-btn.uploaded { border-color: #86efac; background: #f0fdf4; color: #15803d; }
+
+/* ── Add item dashed btn ── */
+.wh-add-btn {
+  width: 100%; padding: 12px;
+  border: 2px dashed #cbd5e1; border-radius: 10px;
+  background: transparent; color: #64748b;
+  font-size: 13.5px; font-weight: 600; font-family: inherit;
+  cursor: pointer; transition: all 0.15s;
+}
+.wh-add-btn:hover { border-color: #93c5fd; color: #2563eb; background: #eff6ff; }
+
+/* ── Modal overlay ── */
+.wh-modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.55);
+  display: flex; align-items: center; justify-content: center;
+  padding: 1rem; z-index: 200;
+  backdrop-filter: blur(2px);
+}
+.wh-modal {
+  background: #fff; border-radius: 16px;
+  padding: 1.75rem; width: 100%; max-width: 480px;
+  max-height: 90vh; overflow-y: auto;
+  box-shadow: 0 25px 50px rgba(0,0,0,0.25);
+}
+.wh-modal-title {
+  font-size: 16px; font-weight: 700; color: #0f172a;
+  margin: 0 0 1.25rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #f1f5f9;
+  display: flex; justify-content: space-between; align-items: center;
+}
+.wh-modal-close {
+  background: none; border: none; cursor: pointer;
+  color: #94a3b8; font-size: 20px; line-height: 1;
+  padding: 2px 6px; border-radius: 6px;
+  transition: all 0.15s;
+}
+.wh-modal-close:hover { background: #f1f5f9; color: #475569; }
+
+/* ── Misc helpers ── */
+.wh-mono { font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 12.5px; }
+.wh-empty-row { text-align: center; padding: 3rem 1rem; color: #94a3b8; font-size: 13.5px; }
+.wh-flex-row { display: flex; align-items: center; gap: 8px; }
+.wh-gap-1 { gap: 4px; }
+.wh-gap-2 { gap: 8px; }
+.wh-gap-3 { gap: 12px; }
+.wh-mb-1 { margin-bottom: 6px; }
+.wh-mb-2 { margin-bottom: 12px; }
+.wh-mb-3 { margin-bottom: 18px; }
+.wh-mb-4 { margin-bottom: 24px; }
+
+/* ── Print Styles (เพื่อให้ใบปริ้นท์สวยงาม) ── */
+@media print {
+  /* ซ่อนทุกอย่างที่ไม่ใช่เนื้อหาใบปริ้นท์ */
+  nav, .wh-btn, .print-hidden {
+    display: none !important;
+  }
+
+  /* ปรับหน้ากระดาษให้เต็มพื้นที่ */
+  body {
+    background: white !important;
+    padding: 0 !important;
+  }
+
+  .wh-page {
+    padding: 0 !important;
+    max-width: 100% !important;
+  }
+
+  /* ทำให้ตารางในใบปริ้นท์ดูเป็นทางการ */
+  .wh-table {
+    border: 1px solid #000 !important;
+  }
+  .wh-table th, .wh-table td {
+    border: 1px solid #000 !important;
+    padding: 8px !important;
+    color: #000 !important;
+  }
+  .wh-table thead tr {
+    background: #eee !important;
+    -webkit-print-color-adjust: exact;
+  }
+
+  /* บังคับให้ส่วนที่เป็น card แสดงผลบนกระดาษ */
+  .wh-card {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+  }
+}
+
+/* --- สำหรับการพิมพ์เอกสาร (Print Layout) --- */
+@media print {
+  /* 1. ซ่อนปุ่มกดตอนพิมพ์ */
+  .print\:hidden {
+    display: none !important;
+  }
+
+  /* 2. บังคับให้เป็นพื้นหลังสีขาวล้วน */
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  /* 3. จัดระเบียบเนื้อหาหน้ากระดาษ */
+  .max-w-4xl {
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* 4. บังคับให้สีในตารางแสดงผลตอนพิมพ์ */
+  .bg-gray-800 {
+    background-color: #333333 !important;
+    color: #ffffff !important;
+    -webkit-print-color-adjust: exact;
+  }
+
+  /* 5. ตัดเงา (shadow) และขอบ (border) ที่ไม่จำเป็น */
+  .shadow-lg {
+    box-shadow: none !important;
+  }
+}
