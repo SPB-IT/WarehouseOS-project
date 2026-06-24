@@ -6,21 +6,13 @@ export const metadata: Metadata = {
   description: 'ระบบรับฝาก คืน และติดตามสินค้าคลัง',
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+// ✅ Nested layout ต้องไม่มี <html> หรือ <body>
+// root layout (app/layout.tsx) จัดการ html/body/fonts แล้ว
+export default function MainLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="th">
-      <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap"
-          rel="stylesheet"
-        />
-      </head>
-      <body style={{ margin: 0, background: '#f8fafc', fontFamily: "'Sarabun', 'Noto Sans Thai', sans-serif", minHeight: '100vh' }}>
-        <Navbar />
-        <main>{children}</main>
-      </body>
-    </html>
+    <>
+      <Navbar />
+      <main>{children}</main>
+    </>
   );
 }

@@ -3,146 +3,218 @@ import { useEffect, useState, use } from 'react';
 import { supabase } from '../../../lib/supabase';
 
 export default function PrintForm({ params }: { params: Promise<{ id: string }> }) {
-  const [data, setData] = useState<any>(null);
+  const [depositItems, setDepositItems] = useState<any[]>([]);
+  const [depositInfo, setDepositInfo] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
   const unwrappedParams = use(params);
   const id = unwrappedParams.id;
 
   useEffect(() => {
     if (!id) return;
     const fetchData = async () => {
-      const { data } = await supabase
+      const { data: targetItem } = await supabase
         .from('deposit_items')
         .select('*, deposits(*)')
         .eq('id', id)
         .single();
-      setData(data);
+
+      if (!targetItem) { setLoading(false); return; }
+
+      setDepositInfo(targetItem.deposits);
+
+      const { data: allItems } = await supabase
+        .from('deposit_items')
+        .select('*')
+        .eq('deposit_id', targetItem.deposit_id)
+        .order('id', { ascending: true });
+
+      setDepositItems(allItems || []);
+      setLoading(false);
     };
     fetchData();
   }, [id]);
 
-  if (!data) return (
-    <div style={{ padding: '40px', fontFamily: 'TH Sarabun New, Arial, sans-serif', textAlign: 'center', color: '#666' }}>
+  if (loading) return (
+    <div style={{ padding: '40px', fontFamily: 'TH Sarabun New, Sarabun, Arial, sans-serif', textAlign: 'center', color: '#666' }}>
       กำลังเตรียมเอกสาร...
     </div>
   );
 
-  const depositDate = data.deposits?.deposit_date
-    ? new Date(data.deposits.deposit_date).toLocaleDateString('th-TH', {
-        year: 'numeric', month: 'long', day: 'numeric'
-      })
-    : '-';
+  if (!depositInfo) return (
+    <div style={{ padding: '40px', fontFamily: 'TH Sarabun New, Sarabun, Arial, sans-serif', color: '#c00' }}>
+      ไม่พบข้อมูล
+    </div>
+  );
 
-  const printedDate = new Date().toLocaleDateString('th-TH', {
-    year: 'numeric', month: 'short', day: 'numeric'
-  });
+  const depositDate = depositInfo.deposit_date
+    ? new Date(depositInfo.deposit_date).toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' })
+    : depositInfo.created_at
+      ? new Date(depositInfo.created_at).toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' })
+      : '-';
+
+  const printedDate = new Date().toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
+  const printedTime = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
+  const totalQty = depositItems.reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
+
+  const docNo = depositInfo.tracking_id || `DEP-${id}`;
+  const LINE = '#000';
 
   return (
     <div style={{
-      maxWidth: '210mm',
-      margin: '0 auto',
-      padding: '20mm 24mm',
-      backgroundColor: '#fff',
-      color: '#000',
-      fontFamily: 'TH Sarabun New, Arial, sans-serif',
-      fontSize: '16px',
-      minHeight: '297mm',
+      maxWidth: '210mm', margin: '0 auto', padding: '12mm 14mm',
+      backgroundColor: '#fff', color: '#1a1a1a',
+      fontFamily: 'TH Sarabun New, Sarabun, Arial, sans-serif',
+      fontSize: '13px', minHeight: '297mm',
+      lineHeight: 1.5,
     }}>
 
-      {/* Header */}
-      <div style={{ textAlign: 'center', marginBottom: '28px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', marginBottom: '10px' }}>
-          <div style={{ height: '1px', flex: 1, background: '#000' }} />
-          <span style={{ fontSize: '20px' }}>🏭</span>
-          <div style={{ height: '1px', flex: 1, background: '#000' }} />
-        </div>
-        <p style={{ fontSize: '12px', letterSpacing: '0.15em', color: '#666', margin: '0 0 6px', textTransform: 'uppercase' }}>
-          Warehouse Management System
-        </p>
-        <h1 style={{ fontSize: '26px', fontWeight: 'bold', margin: '0 0 4px' }}>ใบรับฝากพัสดุ</h1>
-        <p style={{ fontSize: '14px', color: '#666', margin: 0 }}>Parcel Deposit Receipt</p>
-        <div style={{ height: '1px', background: '#000', marginTop: '20px' }} />
-      </div>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700;800&display=swap');
+        @media print {
+          .no-print { display: none !important; }
+          @page { margin: 0; size: A4; }
+          body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        }
+        .doc-table { width: 100%; border-collapse: collapse; }
+        .doc-table th, .doc-table td { border: 1px solid ${LINE}; padding: 5px 8px; font-size: 13px; vertical-align: top; }
+        .doc-table th { font-weight: 700; color: #1a1a1a; text-align: left; background: #fff; }
+        .sig-line { border-bottom: 1px dotted #000; display: inline-block; }
+      `}</style>
 
-      {/* Info Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', marginBottom: '24px' }}>
-        <div style={{ padding: '12px 0', borderBottom: '0.5px solid #ccc' }}>
-          <p style={{ fontSize: '11px', color: '#888', margin: '0 0 3px', letterSpacing: '0.05em', textTransform: 'uppercase' }}>เลขที่เอกสาร</p>
-          <p style={{ fontSize: '15px', fontWeight: 'bold', margin: 0 }}>{data.deposits?.tracking_id ?? '-'}</p>
-        </div>
-        <div style={{ padding: '12px 0', borderBottom: '0.5px solid #ccc', textAlign: 'right' }}>
-          <p style={{ fontSize: '11px', color: '#888', margin: '0 0 3px', letterSpacing: '0.05em', textTransform: 'uppercase' }}>วันที่รับฝาก</p>
-          <p style={{ fontSize: '15px', fontWeight: 'bold', margin: 0 }}>{depositDate}</p>
-        </div>
-        <div style={{ padding: '12px 0' }}>
-          <p style={{ fontSize: '11px', color: '#888', margin: '0 0 3px', letterSpacing: '0.05em', textTransform: 'uppercase' }}>ชื่อผู้ฝาก</p>
-          <p style={{ fontSize: '15px', fontWeight: 'bold', margin: 0 }}>{data.deposits?.customer_name ?? '-'}</p>
-        </div>
-        <div style={{ padding: '12px 0', textAlign: 'right' }}>
-          <p style={{ fontSize: '11px', color: '#888', margin: '0 0 3px', letterSpacing: '0.05em', textTransform: 'uppercase' }}>เบอร์โทรศัพท์</p>
-          <p style={{ fontSize: '15px', fontWeight: 'bold', margin: 0 }}>{data.deposits?.customer_phone ?? '-'}</p>
-        </div>
-      </div>
-
-      {/* Table */}
-      <div style={{ border: '0.5px solid #ccc', borderRadius: '6px', overflow: 'hidden', marginBottom: '32px' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '15px' }}>
-          <thead>
-            <tr style={{ background: '#f5f5f5' }}>
-              <th style={{ padding: '10px 14px', textAlign: 'center', fontWeight: 'bold', color: '#555', width: '48px', borderBottom: '0.5px solid #ccc' }}>ลำดับ</th>
-              <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 'bold', color: '#555', borderBottom: '0.5px solid #ccc' }}>รายการพัสดุ</th>
-              <th style={{ padding: '10px 14px', textAlign: 'center', fontWeight: 'bold', color: '#555', width: '80px', borderBottom: '0.5px solid #ccc' }}>จำนวน</th>
-              <th style={{ padding: '10px 14px', textAlign: 'center', fontWeight: 'bold', color: '#555', width: '80px', borderBottom: '0.5px solid #ccc' }}>หน่วย</th>
-            </tr>
-          </thead>
+      {/* ══ PAGE NUMBER + DOC NO ══ */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+        <div style={{ fontSize: '11px', color: '#888' }}>หน้า 1/1</div>
+        <table style={{ borderCollapse: 'collapse' }}>
           <tbody>
             <tr>
-              <td style={{ padding: '12px 14px', textAlign: 'center', color: '#666' }}>1</td>
-              <td style={{ padding: '12px 14px' }}>{data.item_name}</td>
-              <td style={{ padding: '12px 14px', textAlign: 'center', fontWeight: 'bold' }}>{data.remaining_quantity}</td>
-              <td style={{ padding: '12px 14px', textAlign: 'center', color: '#666' }}>{data.unit}</td>
+              <td style={{ border: `1px solid ${LINE}`, padding: '3px 8px', fontSize: '12px', fontWeight: 700, whiteSpace: 'nowrap' }}>เลขที่เอกสาร</td>
+              <td style={{ border: `1px solid ${LINE}`, padding: '3px 8px', fontSize: '12px', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>{docNo}</td>
             </tr>
-            <tr style={{ background: '#f5f5f5' }}>
-              <td colSpan={4} style={{ padding: '10px 14px', textAlign: 'right', fontSize: '14px', color: '#666' }}>
-                รวมทั้งสิ้น: <strong>{data.remaining_quantity} {data.unit}</strong>
-              </td>
+            <tr>
+              <td style={{ border: `1px solid ${LINE}`, padding: '3px 8px', fontSize: '12px', fontWeight: 700, whiteSpace: 'nowrap' }}>วันที่เอกสาร</td>
+              <td style={{ border: `1px solid ${LINE}`, padding: '3px 8px', fontSize: '12px', whiteSpace: 'nowrap' }}>{depositDate}</td>
             </tr>
           </tbody>
         </table>
       </div>
 
-      {/* Note */}
-      <div style={{ background: '#f9f9f9', borderRadius: '6px', padding: '14px 16px', marginBottom: '40px', fontSize: '14px' }}>
-        <p style={{ margin: 0, color: '#666' }}>
-          <strong style={{ color: '#000' }}>หมายเหตุ:</strong> กรุณาเก็บเอกสารนี้ไว้เป็นหลักฐาน บริษัทฯ จะไม่รับผิดชอบหากเอกสารสูญหาย
-        </p>
+      {/* ══ DOCUMENT TITLE ══ */}
+      <div style={{ textAlign: 'center', fontSize: '19px', fontWeight: 800, color: '#1a1a1a', margin: '6px 0 12px' }}>ใบรับฝากพัสดุ</div>
+
+      {/* ══ INFO SECTION ══ */}
+      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '12px' }}>
+        <tbody>
+          <tr>
+            <td style={{ border: `1px solid ${LINE}`, padding: '5px 8px', fontSize: '13px', width: '50%' }}>
+              <span style={{ fontWeight: 700 }}>ผู้ฝาก</span>
+              <span style={{ marginLeft: 10 }}>{depositInfo.customer_name || '—'}</span>
+            </td>
+            <td style={{ border: `1px solid ${LINE}`, padding: '5px 8px', fontSize: '13px', width: '50%' }}>
+              <span style={{ fontWeight: 700 }}>วันที่รับฝาก</span>
+              <span style={{ marginLeft: 10 }}>{depositDate}</span>
+            </td>
+          </tr>
+          <tr>
+            <td style={{ border: `1px solid ${LINE}`, padding: '5px 8px', fontSize: '13px' }}>
+              <span style={{ fontWeight: 700 }}>เบอร์โทรศัพท์</span>
+              <span style={{ marginLeft: 10 }}>{depositInfo.customer_phone || '—'}</span>
+            </td>
+            <td style={{ border: `1px solid ${LINE}`, padding: '5px 8px', fontSize: '13px' }}>
+              <span style={{ fontWeight: 700 }}>พนักงานผู้รับฝาก</span>
+              <span style={{ marginLeft: 10 }}>{depositInfo.staff_received_name || '—'}</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* ══ ITEMS TABLE ══ */}
+      <table className="doc-table" style={{ marginBottom: '0' }}>
+        <thead>
+          <tr>
+            <th style={{ width: '36px', textAlign: 'center' }}>ลำดับ</th>
+            <th style={{ width: '80px' }}>รหัสพัสดุ</th>
+            <th>รายการพัสดุ</th>
+            <th style={{ width: '110px' }}>ที่เก็บ / พิกัด</th>
+            <th style={{ width: '60px', textAlign: 'center' }}>จำนวน</th>
+            <th style={{ width: '60px', textAlign: 'center' }}>หน่วยนับ</th>
+          </tr>
+        </thead>
+        <tbody>
+          {depositItems.map((item, idx) => (
+            <tr key={item.id}>
+              <td style={{ textAlign: 'center', color: '#444' }}>{idx + 1}</td>
+              <td style={{ fontFamily: 'monospace', color: '#444' }}>{`PCL-${String(item.id).padStart(5, '0')}`}</td>
+              <td>
+                <div style={{ fontWeight: 700 }}>{item.item_name}</div>
+                {item.detail && <div style={{ fontSize: '12px', color: '#777' }}>{item.detail}</div>}
+              </td>
+              <td>{item.storage_location || '—'}</td>
+              <td style={{ textAlign: 'center', fontWeight: 700 }}>{item.quantity}</td>
+              <td style={{ textAlign: 'center' }}>{item.unit}</td>
+            </tr>
+          ))}
+          {/* filler rows to keep the form looking like a printed slip */}
+          {Array.from({ length: Math.max(0, 4 - depositItems.length) }).map((_, i) => (
+            <tr key={`filler-${i}`}>
+              <td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td>
+            </tr>
+          ))}
+          <tr>
+            <td colSpan={4} style={{ textAlign: 'right', fontWeight: 700 }}>รวม</td>
+            <td colSpan={2} style={{ textAlign: 'center', fontWeight: 800 }}>{totalQty}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* ══ NOTES (เส้นเปล่าสำหรับเขียนหมายเหตุ) ══ */}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', margin: '12px 0 30px', fontSize: '13px' }}>
+        <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>หมายเหตุ</span>
+        <span style={{ flex: 1, borderBottom: '1px dotted #000', height: '1px' }}></span>
       </div>
 
-      {/* Signatures */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '40px' }}>
-        {['ลงชื่อเจ้าหน้าที่รับฝาก', 'ลงชื่อผู้ฝาก'].map((label) => (
-          <div key={label} style={{ textAlign: 'center' }}>
-            <div style={{ height: '56px', borderBottom: '0.5px solid #000', marginBottom: '10px' }} />
-            <p style={{ fontSize: '14px', fontWeight: 'bold', margin: '0 0 3px' }}>{label}</p>
-            <p style={{ fontSize: '13px', color: '#666', margin: 0 }}>( ................................................ )</p>
-            <p style={{ fontSize: '13px', color: '#666', margin: '4px 0 0' }}>วันที่ ........../........../..........​</p>
-          </div>
-        ))}
-      </div>
+      {/* ══ SIGNATURES (แบบไม่มีกรอบ ใช้เส้นประจุดเดียวสำหรับลงชื่อ) ══ */}
+      {[
+        [
+          { label: 'ผู้บันทึกรายการ', name: depositInfo.staff_received_name },
+          { label: 'ผู้ฝากของ', name: '' },
+        ],
+      ].map((row, rowIdx) => (
+        <div key={rowIdx} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '34px', fontSize: '13px' }}>
+          {row.map((sig, i) => (
+            <div key={i} style={{ textAlign: 'center', width: '46%' }}>
+              <div style={{ borderBottom: '1px dotted #000', width: '70%', margin: '0 auto 14px', height: '24px' }}></div>
+              <div style={{ marginBottom: '6px' }}>
+                ( {sig.name || '\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0'} )
+              </div>
+              <div style={{ marginBottom: '8px' }}>ตำแหน่ง .........................................</div>
+              <div style={{ fontWeight: 700 }}>{sig.label}</div>
+            </div>
+          ))}
+        </div>
+      ))}
 
-      {/* Footer */}
-      <div style={{ height: '1px', background: '#ddd', margin: '32px 0 16px' }} />
-      <p style={{ fontSize: '12px', color: '#999', textAlign: 'center', margin: 0, letterSpacing: '0.03em' }}>
-        เอกสารนี้ออกโดยระบบ Warehouse Management System · พิมพ์เมื่อ {printedDate}
-      </p>
+      {/* ══ FOOTER ══ */}
+      <div style={{ borderTop: '1px solid #ddd', paddingTop: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ fontSize: '10px', color: '#aaa' }}>เอกสารอ้างอิง: {docNo}</div>
+        <div style={{ fontSize: '10px', color: '#aaa', textAlign: 'right' }}>
+          พิมพ์เมื่อ {printedDate} เวลา {printedTime} น.
+        </div>
+      </div>
 
       {/* Print Button */}
-      <style>{`@media print { .no-print { display: none !important; } }`}</style>
-      <div className="no-print" style={{ marginTop: '40px', textAlign: 'center' }}>
+      <div className="no-print" style={{ marginTop: '28px', textAlign: 'center', display: 'flex', gap: 12, justifyContent: 'center' }}>
         <button
           onClick={() => window.print()}
-          style={{ padding: '10px 32px', backgroundColor: '#000', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '15px', borderRadius: '6px' }}
+          style={{ padding: '10px 32px', backgroundColor: '#0e3060', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '15px', borderRadius: '8px', fontWeight: 700, fontFamily: 'inherit' }}
         >
-          สั่งพิมพ์เอกสาร
+          🖨 สั่งพิมพ์เอกสาร
+        </button>
+        <button
+          onClick={() => window.close()}
+          style={{ padding: '10px 24px', backgroundColor: '#f0f4f9', color: '#0e3060', border: '1.5px solid #d1dce8', cursor: 'pointer', fontSize: '15px', borderRadius: '8px', fontWeight: 600, fontFamily: 'inherit' }}
+        >
+          ปิด
         </button>
       </div>
     </div>

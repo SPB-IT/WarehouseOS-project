@@ -1,93 +1,320 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { supabase } from '../../../lib/supabase';
+import type { DepositItem, Withdrawal } from '../../../types/warehouse';
+import { Toast, useToast } from '../components/Toast';
+
+interface WithdrawalHistory extends Withdrawal {
+  deposit_items?: DepositItem & { deposits?: { tracking_id: string; customer_name: string } };
+}
 
 export default function InventoryPage() {
-  const [items, setItems] = useState<any[]>([]);
-  const [viewingItem, setViewingItem] = useState<any>(null);
+  const [items, setItems] = useState<DepositItem[]>([]);
+  const [viewingItem, setViewingItem] = useState<DepositItem | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('ทั้งหมด');
   const [loading, setLoading] = useState(true);
+  const [imgZoom, setImgZoom] = useState(false);
+  const [page, setPage] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
+  const [activeCount, setActiveCount] = useState(0);
+  const [returnedCount, setReturnedCount] = useState(0);
 
-  useEffect(() => { fetchItems(); }, []);
+  // เพิ่ม State สำหรับระบบเรียงลำดับ และจำนวนแถวที่ต้องการแสดงต่อหน้า (PageSize)
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest'>('newest');
+  const [pageSize, setPageSize] = useState<number>(10); // ค่าเริ่มต้นเปลี่ยนมาปรับตาม Component ควบคุม
+
+  // ── ประวัติการรับ-คืน ──
+  const [historyItem, setHistoryItem] = useState<DepositItem | null>(null);
+  const [historyData, setHistoryData] = useState<WithdrawalHistory[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  // ── Edit modal ──
+  const [editItem, setEditItem] = useState<DepositItem | null>(null);
+  const [editLoading, setEditLoading] = useState(false);
+  const [editForm, setEditForm] = useState({
+    item_name: '', detail: '', quantity: 0, unit: '',
+    storage_location: '', customer_name: '', customer_phone: '',
+  });
+
+  // ── Export ──
+  const [exportLoading, setExportLoading] = useState(false);
+
+  const { toasts, removeToast, toast } = useToast();
+
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(searchTerm), 350);
+    return () => clearTimeout(t);
+  }, [searchTerm]);
+
+  useEffect(() => { setPage(0); }, [debouncedSearch, statusFilter, pageSize, sortBy]);
+  useEffect(() => { fetchItems(); }, [page, debouncedSearch, statusFilter, pageSize, sortBy]);
+  useEffect(() => { fetchGlobalCounts(); }, []);
 
   const fetchItems = async () => {
     setLoading(true);
-    const { data } = await supabase
+    const from = page * pageSize;
+    const to = from + pageSize - 1;
+
+    let query = supabase
       .from('deposit_items')
-      .select('*, deposits(tracking_id, customer_name, customer_phone, deposit_date)');
-    setItems(data || []);
+      .select('*, deposits(id, tracking_id, customer_name, customer_phone, deposit_date, staff_received_name)', { count: 'exact' });
+
+    if (statusFilter === 'กำลังฝาก') {
+      query = query.neq('status', 'คืนแล้ว').gt('remaining_quantity', 0);
+    } else if (statusFilter === 'คืนแล้ว') {
+      query = query.or('status.eq.คืนแล้ว,remaining_quantity.lte.0');
+    }
+
+    const s = debouncedSearch.trim().replace(/[,()%]/g, '');
+    if (s) {
+      const { data: matchedDeposits } = await supabase
+        .from('deposits')
+        .select('id')
+        .or(`tracking_id.ilike.%${s}%,customer_name.ilike.%${s}%,customer_phone.ilike.%${s}%`);
+      const depositIds = (matchedDeposits || []).map((d: any) => d.id);
+
+      if (depositIds.length > 0) {
+        query = query.or(`item_name.ilike.%${s}%,deposit_id.in.(${depositIds.join(',')})`);
+      } else {
+        query = query.ilike('item_name', `%${s}%`);
+      }
+    }
+
+    // แก้ไขตรรกะ Order ให้อ้างอิงตาม State sortBy ที่ผู้ใช้เลือกจากหน้าเว็บ
+    const { data, count } = await query
+      .order('id', { ascending: sortBy === 'oldest' })
+      .range(from, to);
+
+    setItems((data as DepositItem[]) || []);
+    setTotalCount(count ?? 0);
     setLoading(false);
   };
 
-  const handlePrint = (id: string) => {
-    const width = 800, height = 900;
-    const left = window.screen.width / 2 - width / 2;
-    const top = window.screen.height / 2 - height / 2;
-    window.open(`/print/${id}`, 'PrintPopup', `width=${width},height=${height},top=${top},left=${left},scrollbars=yes,status=no,toolbar=no,menubar=no`);
+  const handlePrint = (item: DepositItem) => {
+    const isReturned = item.status === 'คืนแล้ว' || item.remaining_quantity <= 0;
+    const w = 800, h = 900;
+    if (isReturned) {
+      supabase.from('withdrawals').select('id').eq('deposit_item_id', item.id)
+        .order('id', { ascending: false }).limit(1).single()
+        .then(({ data }) => {
+          if (data) window.open(`/print-withdraw/${data.id}`, 'PrintPopup', `width=${w},height=${h},top=${window.screen.height/2-h/2},left=${window.screen.width/2-w/2},scrollbars=yes,status=no,toolbar=no,menubar=no`);
+        });
+    } else {
+      window.open(`/print/${item.id}`, 'PrintPopup', `width=${w},height=${h},top=${window.screen.height/2-h/2},left=${window.screen.width/2-w/2},scrollbars=yes,status=no,toolbar=no,menubar=no`);
+    }
   };
 
-  const filteredItems = items.filter((item) => {
-    const matchesSearch =
-      item.deposits?.tracking_id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.deposits?.customer_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.deposits?.customer_phone?.includes(searchTerm) ||
-      item.item_name?.toLowerCase().includes(searchTerm.toLowerCase());
-    const status = item.status || (item.remaining_quantity <= 0 ? 'คืนแล้ว' : 'กำลังฝาก');
-    const matchesStatus = statusFilter === 'ทั้งหมด' || status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  const openHistory = async (item: DepositItem) => {
+    setHistoryItem(item);
+    setHistoryLoading(true);
+    const { data, error } = await supabase
+      .from('withdrawals')
+      .select('*')
+      .eq('deposit_item_id', item.id)
+      .order('withdraw_date', { ascending: false });
+    if (!error) setHistoryData((data as WithdrawalHistory[]) || []);
+    setHistoryLoading(false);
+  };
 
-  const activeCount = items.filter(i => i.status !== 'คืนแล้ว' && i.remaining_quantity > 0).length;
-  const returnedCount = items.filter(i => i.status === 'คืนแล้ว' || i.remaining_quantity <= 0).length;
+  const openEdit = (item: DepositItem) => {
+    setEditItem(item);
+    setEditForm({
+      item_name: item.item_name || '',
+      detail: item.detail || '',
+      quantity: item.quantity,
+      unit: item.unit || '',
+      storage_location: item.storage_location || '',
+      customer_name: (item.deposits as any)?.customer_name || '',
+      customer_phone: (item.deposits as any)?.customer_phone || '',
+    });
+  };
+
+  const handleEditSave = async () => {
+    if (!editItem) return;
+    setEditLoading(true);
+    try {
+      const { error: itemErr } = await supabase.from('deposit_items').update({
+        item_name: editForm.item_name,
+        detail: editForm.detail,
+        quantity: editForm.quantity,
+        unit: editForm.unit,
+        storage_location: editForm.storage_location,
+      }).eq('id', editItem.id);
+      if (itemErr) throw itemErr;
+
+      const depositId = (editItem.deposits as any)?.id ?? (editItem as any).deposit_id;
+      if (depositId) {
+        const { error: depErr } = await supabase.from('deposits').update({
+          customer_name: editForm.customer_name,
+          customer_phone: editForm.customer_phone,
+        }).eq('id', depositId);
+        if (depErr) throw depErr;
+      }
+
+      toast('แก้ไขข้อมูลสำเร็จ!', 'success');
+      setEditItem(null);
+      await fetchItems();
+    } catch (err: any) {
+      toast('เกิดข้อผิดพลาด: ' + (err?.message || 'ไม่ทราบสาเหตุ'), 'error');
+    }
+    setEditLoading(false);
+  };
+
+  const handleExportCSV = async () => {
+    setExportLoading(true);
+    const { data } = await supabase
+      .from('deposit_items')
+      .select('*, deposits(tracking_id, customer_name, customer_phone, deposit_date, staff_received_name)')
+      .order('id', { ascending: false });
+    if (!data) { setExportLoading(false); return; }
+
+    const rows = [
+      ['Tracking ID', 'ชื่อผู้ฝาก', 'เบอร์โทร', 'วันที่รับฝาก', 'พนักงานผู้รับฝาก', 'ชื่อสิ่งของ', 'รายละเอียด', 'จำนวนทั้งหมด', 'คงเหลือ', 'หน่วย', 'ตำแหน่งเก็บ', 'สถานะ'],
+      ...data.map((item: any) => [
+        item.deposits?.tracking_id || '',
+        item.deposits?.customer_name || '',
+        item.deposits?.customer_phone || '',
+        item.deposits?.deposit_date ? item.deposits.deposit_date.split('T')[0] : '',
+        item.deposits?.staff_received_name || '',
+        item.item_name || '',
+        item.detail || '',
+        item.quantity,
+        item.remaining_quantity,
+        item.unit || '',
+        item.storage_location || '',
+        item.status || (item.remaining_quantity <= 0 ? 'คืนแล้ว' : 'กำลังฝาก'),
+      ]),
+    ];
+
+    const csvContent = '\uFEFF' + rows.map(r => r.map((c: any) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `warehouse-inventory-${new Date().toISOString().split('T')[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setExportLoading(false);
+    toast('Export CSV สำเร็จ!', 'success');
+  };
+
+  const filtered = items;
+
+  const fetchGlobalCounts = async () => {
+    const [{ count: active }, { count: returned }] = await Promise.all([
+      supabase.from('deposit_items').select('*', { count: 'exact', head: true })
+        .neq('status', 'คืนแล้ว').gt('remaining_quantity', 0),
+      supabase.from('deposit_items').select('*', { count: 'exact', head: true })
+        .or('status.eq.คืนแล้ว,remaining_quantity.lte.0'),
+    ]);
+    setActiveCount(active ?? 0);
+    setReturnedCount(returned ?? 0);
+  };
+  
+  // คำนวณจำนวนหน้าทั้งหมดแปรผันตาม pageSize ล่าสุด
+  const totalPages = Math.ceil(totalCount / pageSize) || 1;
 
   return (
     <div className="wh-page">
-      <div className="wh-page-header">
-        <h1 className="wh-page-title">รายการสิ่งของในคลัง</h1>
-        <p className="wh-page-sub">
-          ทั้งหมด {items.length} รายการ &nbsp;·&nbsp;
-          <span style={{ color: '#16a34a', fontWeight: 600 }}>กำลังฝาก {activeCount}</span> &nbsp;·&nbsp;
-          <span style={{ color: '#64748b' }}>คืนแล้ว {returnedCount}</span>
-        </p>
+      <Toast toasts={toasts} onRemove={removeToast} />
+
+      {/* Header - บังคับเนื้อหาชิดซ้ายสุดอย่างเป็นธรรมชาติเรียบร้อยตามต้นฉบับเดิม */}
+      <div className="wh-page-header" style={{ marginBottom: 20, width: '100%' }}>
+        <div style={{ textAlign: 'left' }}>
+          <h1 className="wh-page-title" style={{ textAlign: 'left', margin: 0 }}>รายการสิ่งของในคลัง
+            <button
+              type="button"
+              onClick={handleExportCSV}
+              disabled={exportLoading}
+              className="wh-btn"
+              style={{ padding: '8px 18px', fontSize: 13, background: 'linear-gradient(135deg,#16a34a,#15803d)', color: '#fff', border: 'none', borderRadius: 9, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 7, flexShrink: 0, marginLeft: 'auto', height: 38 }}
+            >
+              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              {exportLoading ? 'กำลัง Export...' : 'Export CSV'}
+            </button></h1>
+          <p className="wh-page-sub" style={{ textAlign: 'left', margin: '4px 0 0 0' }}>
+            ทั้งหมด {totalCount} รายการ &nbsp;·&nbsp;
+            <span style={{ color: 'var(--sp-success)', fontWeight: 700 }}>กำลังฝาก {activeCount}</span>
+            &nbsp;·&nbsp;
+            <span style={{ color: 'var(--sp-text3)' }}>คืนแล้ว {returnedCount}</span>
+          </p>
+        </div>
       </div>
 
-      {/* Search & filter */}
-      <div className="wh-search-bar">
-        <div className="wh-search-wrap" style={{ flex: 1 }}>
+      {/* Search & filter - แถวเครื่องมือที่รวบรวมฟังก์ชัน ค้นหา, กรองสถานะ, จัดเรียง, แสดงแถว, รีเฟรช และปุ่ม Export สีเขียวไว้ที่เดียวกัน */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 16, alignItems: 'center' }}>
+        <div className="wh-search-wrap" style={{ flex: '1 1 220px', minWidth: 200, position: 'relative' }}>
           <svg className="wh-search-icon" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
             <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
           </svg>
           <input
-            type="text"
-            className="wh-search-input"
+            type="text" className="wh-search-input"
             placeholder="ค้นหาด้วยชื่อผู้ฝาก, เบอร์โทร, หรือ Tracking ID..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+            style={{ paddingRight: searchTerm ? 34 : 12 }}
           />
+          {searchTerm && (
+            <button type="button" className="wh-search-clear" onClick={() => setSearchTerm('')} title="ล้างการค้นหา">✕</button>
+          )}
         </div>
-        <div className="wh-flex-row">
-          {['ทั้งหมด', 'กำลังฝาก', 'คืนแล้ว'].map((f) => (
-            <button
-              key={f}
-              onClick={() => setStatusFilter(f)}
-              className="wh-btn"
-              style={{
-                padding: '7px 16px', fontSize: 13,
-                background: statusFilter === f ? '#2563eb' : 'transparent',
-                color: statusFilter === f ? '#fff' : '#64748b',
-                border: statusFilter === f ? 'none' : '1.5px solid #e2e8f0',
-                borderRadius: 8,
-              }}
-            >
-              {f}
+
+        {/* ปุ่มเลือกสถานะ */}
+        <div className="wh-flex-row" style={{ gap: 6 }}>
+          {[
+            { label: 'ทั้งหมด', cls: 'active-all' },
+            { label: 'กำลังฝาก', cls: 'active-active' },
+            { label: 'คืนแล้ว', cls: 'active-returned' },
+          ].map(({ label, cls }) => (
+            <button key={label} onClick={() => setStatusFilter(label)}
+              className={`wh-filter-pill${statusFilter === label ? ' ' + cls : ''}`}>
+              {label === 'กำลังฝาก' && <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#22c55e', marginRight: 5 }} />}
+              {label === 'คืนแล้ว' && <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: '#818cf8', marginRight: 5 }} />}
+              {label}
             </button>
           ))}
         </div>
-        <button onClick={fetchItems} className="wh-btn wh-btn-ghost" style={{ padding: '7px 12px' }} title="รีเฟรช">
-          <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
-            <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+
+        {/* ตัวเลือกจัดเรียงลำดับข้อมูล */}
+        <select
+          value={sortBy}
+          onChange={e => setSortBy(e.target.value as 'newest' | 'oldest')}
+          style={{ padding: '9px 12px', borderRadius: 8, border: '1px solid #d9e2ec', background: '#f0f4f8', fontSize: 13, color: '#334e68', cursor: 'pointer', outline: 'none' }}
+        >
+          <option value="newest">เรียงตาม: วันใหม่สุด</option>
+          <option value="oldest">เรียงตาม: วันเก่าสุด</option>
+        </select>
+
+        {/* ตัวเลือกจำนวนรายการที่แสดงผลต่อหน้า */}
+        <select
+          value={pageSize}
+          onChange={e => setPageSize(Number(e.target.value))}
+          style={{ padding: '9px 12px', borderRadius: 8, border: '1px solid #d9e2ec', background: '#f0f4f8', fontSize: 13, color: '#334e68', cursor: 'pointer', outline: 'none' }}
+        >
+          <option value={10}>แสดง 10 รายการ</option>
+          <option value={20}>แสดง 20 รายการ</option>
+          <option value={30}>แสดง 30 รายการ</option>
+          <option value={50}>แสดง 50 รายการ</option>
+        </select>
+
+        {/* ปุ่มรีเฟรชข้อมูล */}
+        <button
+          type="button"
+          onClick={() => { fetchItems(); fetchGlobalCounts(); }}
+          disabled={loading}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px', borderRadius: 8,
+            border: '1px solid #d9e2ec', background: '#fff', fontSize: 13, color: '#334e68', fontWeight: 500, cursor: 'pointer', height: 38
+          }}
+        >
+          <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }}>
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
           </svg>
+          รีเฟรช
         </button>
       </div>
 
@@ -109,67 +336,75 @@ export default function InventoryPage() {
             <tbody>
               {loading ? (
                 <tr><td colSpan={7} className="wh-empty-row">กำลังโหลดข้อมูล...</td></tr>
-              ) : filteredItems.length === 0 ? (
+              ) : filtered.length === 0 ? (
                 <tr><td colSpan={7} className="wh-empty-row">ไม่พบข้อมูลที่ค้นหา</td></tr>
-              ) : filteredItems.map((item) => {
-                const isReturned = item.status === 'คืนแล้ว' || (!item.status && item.remaining_quantity <= 0);
+              ) : filtered.map((item) => {
+                const isReturned = item.status === 'คืนแล้ว' || item.remaining_quantity <= 0;
+                const pct = Math.round((item.remaining_quantity / item.quantity) * 100);
                 return (
                   <tr key={item.id}>
                     <td style={{ textAlign: 'center' }}>
                       {item.item_image_url ? (
-                        <img src={item.item_image_url} alt="" style={{ width: 42, height: 42, objectFit: 'cover', borderRadius: 8, border: '1px solid #e2e8f0' }} />
+                        <img
+                          src={item.item_image_url} alt=""
+                          style={{ width: 44, height: 44, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--sp-border)', cursor: 'pointer', transition: 'transform 0.15s' }}
+                          onClick={() => setViewingItem(item)}
+                          onMouseEnter={e => (e.currentTarget.style.transform = 'scale(1.08)')}
+                          onMouseLeave={e => (e.currentTarget.style.transform = 'scale(1)')}
+                        />
                       ) : (
-                        <div style={{ width: 42, height: 42, background: '#f1f5f9', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9, color: '#94a3b8', border: '1px solid #e2e8f0', margin: '0 auto' }}>
-                          ไม่มีรูป
-                        </div>
+                        <div style={{ width: 44, height: 44, background: 'var(--sp-bg2)', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8.5, color: 'var(--sp-text3)', border: '1.5px dashed var(--sp-border)', margin: '0 auto', letterSpacing: 0.3 }}>ไม่มีรูป</div>
                       )}
                     </td>
                     <td>
-                      <span className="wh-mono" style={{ color: '#2563eb', fontWeight: 700, fontSize: 13 }}>
-                        {item.deposits?.tracking_id}
+                      <span className="wh-mono" style={{ color: 'var(--sp-blue-md)', fontWeight: 800, fontSize: 12.5, background: '#deeafa', padding: '3px 8px', borderRadius: 6 }}>
+                        {(item.deposits as any)?.tracking_id}
                       </span>
                     </td>
                     <td>
-                      <div style={{ fontWeight: 600, color: '#1e293b' }}>{item.deposits?.customer_name}</div>
-                      <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 2 }}>{item.deposits?.customer_phone || '—'}</div>
+                      <div style={{ fontWeight: 700, color: 'var(--sp-text)' }}>{(item.deposits as any)?.customer_name}</div>
+                      <div style={{ fontSize: 12, color: 'var(--sp-text3)', marginTop: 2 }}>{(item.deposits as any)?.customer_phone || '—'}</div>
                     </td>
                     <td>
-                      <div style={{ fontWeight: 600, color: '#1e293b' }}>{item.item_name}</div>
-                      {item.detail && <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{item.detail}</div>}
-                      <div style={{ fontSize: 12, fontWeight: 700, color: '#2563eb', marginTop: 4 }}>
-                        คงเหลือ {item.remaining_quantity}/{item.quantity} {item.unit}
+                      <div style={{ fontWeight: 700, color: 'var(--sp-text)' }}>{item.item_name}</div>
+                      {item.detail && <div style={{ fontSize: 12, color: 'var(--sp-text3)', marginTop: 2 }}>{item.detail}</div>}
+                      <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 7 }}>
+                        <div style={{ flex: 1, background: 'var(--sp-bg2)', borderRadius: 99, height: 5, overflow: 'hidden' }}>
+                          <div style={{ width: `${pct}%`, height: '100%', background: isReturned ? 'var(--sp-text3)' : 'linear-gradient(90deg,var(--sp-blue),var(--sp-blue-lt))', borderRadius: 99 }} />
+                        </div>
+                        <span style={{ fontSize: 11.5, fontWeight: 800, color: isReturned ? 'var(--sp-text3)' : 'var(--sp-blue)', whiteSpace: 'nowrap' }}>
+                          {item.remaining_quantity}/{item.quantity} {item.unit}
+                        </span>
                       </div>
                     </td>
-                    <td style={{ color: '#64748b', fontSize: 13 }}>{item.storage_location || '—'}</td>
+                    <td style={{ color: 'var(--sp-text2)', fontSize: 13 }}>{item.storage_location || '—'}</td>
                     <td style={{ textAlign: 'center' }}>
                       {isReturned
                         ? <span className="wh-badge wh-badge-returned">คืนแล้ว</span>
                         : <span className="wh-badge wh-badge-active">
-                            <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#16a34a', display: 'inline-block' }} />
+                            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--sp-success)', display: 'inline-block', animation: 'pulse 2s ease infinite' }} />
                             กำลังฝาก
                           </span>
                       }
                     </td>
                     <td style={{ textAlign: 'center' }}>
-                      <div className="wh-flex-row wh-gap-1" style={{ justifyContent: 'center' }}>
-                        <button
-                          onClick={() => setViewingItem(item)}
-                          className="wh-btn"
-                          style={{ padding: '5px 11px', fontSize: 12, background: '#eff6ff', color: '#2563eb', border: '1px solid #bfdbfe' }}
-                        >
+                      <div className="wh-flex-row" style={{ justifyContent: 'center', gap: 5, flexWrap: 'wrap' }}>
+                        <button onClick={() => setViewingItem(item)} className="wh-btn" style={{ padding: '5px 10px', fontSize: 12, background: '#deeafa', color: 'var(--sp-blue)', border: '1px solid #b3d0f0', borderRadius: 7 }}>
                           ดูข้อมูล
                         </button>
-                        <button
-                          onClick={() => handlePrint(item.id)}
-                          className="wh-btn"
-                          style={{
-                            padding: '5px 11px', fontSize: 12,
-                            background: isReturned ? '#f5f3ff' : '#f0fdf4',
-                            color: isReturned ? '#7c3aed' : '#16a34a',
-                            border: `1px solid ${isReturned ? '#ddd6fe' : '#bbf7d0'}`,
-                          }}
-                        >
-                          {isReturned ? 'ปริ้นต์ใบคืน' : 'ปริ้นต์ใบฝาก'}
+                        <button onClick={() => openHistory(item)} className="wh-btn" style={{ padding: '5px 10px', fontSize: 12, background: '#f5f3ff', color: '#7c3aed', border: '1px solid #ddd6fe', borderRadius: 7 }}>
+                          ประวัติ
+                        </button>
+                        <button onClick={() => openEdit(item)} className="wh-btn" style={{ padding: '5px 10px', fontSize: 12, background: 'var(--sp-gold-bg)', color: '#92400e', border: '1px solid #f0d99a', borderRadius: 7 }}>
+                          แก้ไข
+                        </button>
+                        <button onClick={() => handlePrint(item)} className="wh-btn" style={{
+                          padding: '5px 10px', fontSize: 12, borderRadius: 7,
+                          background: isReturned ? '#f5f3ff' : '#dcfce7',
+                          color: isReturned ? '#7c3aed' : 'var(--sp-success)',
+                          border: `1px solid ${isReturned ? '#ddd6fe' : '#bbf7d0'}`,
+                        }}>
+                          {isReturned ? 'ปริ้นใบคืน' : 'ปริ้นใบฝาก'}
                         </button>
                       </div>
                     </td>
@@ -179,48 +414,258 @@ export default function InventoryPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div style={{ padding: '12px 20px', borderTop: '1.5px solid var(--sp-bg2)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 12.5, color: 'var(--sp-text3)' }}>
+              หน้า {page + 1} / {totalPages} &nbsp;(แสดง {page * pageSize + 1}–{Math.min((page + 1) * pageSize, totalCount)} จาก {totalCount} รายการ)
+            </span>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0} className="wh-btn wh-btn-ghost" style={{ padding: '6px 14px', fontSize: 13, opacity: page === 0 ? 0.4 : 1 }}>← ก่อนหน้า</button>
+              <button onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1} className="wh-btn wh-btn-ghost" style={{ padding: '6px 14px', fontSize: 13, opacity: page >= totalPages - 1 ? 0.4 : 1 }}>ถัดไป →</button>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Modal */}
-      {viewingItem && (
-        <div className="wh-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setViewingItem(null); }}>
-          <div className="wh-modal">
+      {/* ── History Modal ── */}
+      {historyItem && (
+        <div className="wh-modal-overlay" onClick={e => { if (e.target === e.currentTarget) setHistoryItem(null); }}>
+          <div className="wh-modal" style={{ maxWidth: 560 }}>
             <div className="wh-modal-title">
-              รายละเอียดรายการ
-              <button className="wh-modal-close" onClick={() => setViewingItem(null)}>×</button>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <svg width="16" height="16" fill="none" stroke="#7c3aed" strokeWidth="2.5" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                </svg>
+                ประวัติการรับ-คืน
+              </span>
+              <button className="wh-modal-close" onClick={() => setHistoryItem(null)}>✕</button>
+            </div>
+
+            <div style={{ background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: 10, padding: '12px 16px', marginBottom: 16 }}>
+              <div style={{ fontWeight: 800, color: 'var(--sp-navy)', fontSize: 14 }}>{historyItem.item_name}</div>
+              <div style={{ fontSize: 12.5, color: 'var(--sp-text3)', marginTop: 3 }}>
+                คงเหลือ: <strong style={{ color: '#7c3aed' }}>{historyItem.remaining_quantity}/{historyItem.quantity} {historyItem.unit}</strong>
+                &nbsp;·&nbsp; คืนแล้ว: <strong>{historyItem.quantity - historyItem.remaining_quantity} {historyItem.unit}</strong>
+              </div>
+            </div>
+
+            {historyLoading ? (
+              <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--sp-text3)', fontSize: 13 }}>กำลังโหลดประวัติ...</div>
+            ) : historyData.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--sp-text3)', fontSize: 13 }}>
+                <svg width="36" height="36" fill="none" stroke="var(--sp-border)" strokeWidth="1.5" viewBox="0 0 24 24" style={{ display: 'block', margin: '0 auto 10px' }}>
+                  <circle cx="12" cy="12" r="10"/><path d="M8 15s1.5-2 4-2 4 2 4 2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/>
+                </svg>
+                ยังไม่มีประวัติการคืนสินค้า
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 340, overflowY: 'auto' }}>
+                {historyData.map((w, idx) => {
+                  const d = w.withdraw_date ? new Date(w.withdraw_date) : null;
+                  const dateStr = d ? `${d.getDate()}/${d.getMonth()+1}/${d.getFullYear()+543}` : '—';
+                  const timeStr = d ? `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')} น.` : '';
+                  return (
+                    <div key={w.id} style={{ display: 'flex', gap: 12, padding: '12px 14px', background: idx === 0 ? '#f5f3ff' : 'var(--sp-bg)', border: `1px solid ${idx === 0 ? '#ddd6fe' : 'var(--sp-border)'}`, borderLeft: `3px solid ${idx === 0 ? '#7c3aed' : 'var(--sp-border)'}`, borderRadius: 10 }}>
+                      <div style={{ width: 32, height: 32, borderRadius: '50%', background: idx === 0 ? '#7c3aed' : 'var(--sp-bg2)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <svg width="14" height="14" fill="none" stroke={idx === 0 ? '#fff' : 'var(--sp-text3)'} strokeWidth="2.2" viewBox="0 0 24 24">
+                          <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.51"/>
+                        </svg>
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <div>
+                            <span style={{ fontWeight: 800, fontSize: 14, color: 'var(--sp-navy)' }}>
+                              คืน {w.withdraw_quantity} {historyItem.unit}
+                            </span>
+                            {idx === 0 && <span style={{ marginLeft: 8, fontSize: 10.5, background: '#7c3aed', color: '#fff', padding: '1px 7px', borderRadius: 99, fontWeight: 700 }}>ล่าสุด</span>}
+                          </div>
+                          <div style={{ textAlign: 'right', fontSize: 11.5, color: 'var(--sp-text3)' }}>
+                            <div>{dateStr}</div>
+                            <div>{timeStr}</div>
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 12.5, color: 'var(--sp-text2)', marginTop: 5, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                          <span>
+                            <span style={{ color: 'var(--sp-text3)' }}>พนักงาน:</span>{' '}
+                            <strong>{w.staff_signature_name || '—'}</strong>
+                          </span>
+                          {w.remark && w.remark !== 'คืนสินค้าเรียบร้อยแล้ว' && (
+                            <span>
+                              <span style={{ color: 'var(--sp-text3)' }}>หมายเหตุ:</span>{' '}{w.remark}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div style={{ marginTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
+              <button onClick={() => setHistoryItem(null)} className="wh-btn wh-btn-ghost" style={{ padding: '8px 20px' }}>ปิด</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Edit Modal ── */}
+      {editItem && (
+        <div className="wh-modal-overlay" onClick={e => { if (e.target === e.currentTarget) setEditItem(null); }}>
+          <div className="wh-modal" style={{ maxWidth: 520 }}>
+            <div className="wh-modal-title">
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <svg width="16" height="16" fill="none" stroke="var(--sp-gold)" strokeWidth="2.5" viewBox="0 0 24 24">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                </svg>
+                แก้ไขข้อมูล
+              </span>
+              <button className="wh-modal-close" onClick={() => setEditItem(null)}>✕</button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div style={{ background: 'var(--sp-bg)', borderRadius: 10, padding: '12px 14px', border: '1px solid var(--sp-border)' }}>
+                <div style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--sp-text3)', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 10 }}>ข้อมูลผู้ฝาก</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <label className="wh-label">ชื่อ-นามสกุล ผู้ฝาก</label>
+                    <input className="wh-input" value={editForm.customer_name} onChange={e => setEditForm(f => ({ ...f, customer_name: e.target.value }))} />
+                  </div>
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <label className="wh-label">เบอร์โทรศัพท์</label>
+                    <input className="wh-input" value={editForm.customer_phone} onChange={e => setEditForm(f => ({ ...f, customer_phone: e.target.value }))} />
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ background: 'var(--sp-bg)', borderRadius: 10, padding: '12px 14px', border: '1px solid var(--sp-border)' }}>
+                <div style={{ fontSize: 11.5, fontWeight: 800, color: 'var(--sp-text3)', letterSpacing: 0.5, textTransform: 'uppercase', marginBottom: 10 }}>ข้อมูลสินค้า</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <label className="wh-label">ชื่อสิ่งของ</label>
+                    <input className="wh-input" value={editForm.item_name} onChange={e => setEditForm(f => ({ ...f, item_name: e.target.value }))} />
+                  </div>
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <label className="wh-label">ลักษณะเพิ่มเติม</label>
+                    <input className="wh-input" value={editForm.detail} onChange={e => setEditForm(f => ({ ...f, detail: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="wh-label">จำนวน (ทั้งหมด)</label>
+                    <input className="wh-input" type="number" min={editItem.quantity - editItem.remaining_quantity} value={editForm.quantity} onChange={e => setEditForm(f => ({ ...f, quantity: parseInt(e.target.value) || 0 }))} />
+                  </div>
+                  <div>
+                    <label className="wh-label">หน่วย</label>
+                    <input className="wh-input" value={editForm.unit} onChange={e => setEditForm(f => ({ ...f, unit: e.target.value }))} />
+                  </div>
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <label className="wh-label">พิกัดจัดเก็บ</label>
+                    <input className="wh-input" value={editForm.storage_location} onChange={e => setEditForm(f => ({ ...f, storage_location: e.target.value }))} placeholder="เช่น โซน A / ชั้น 2 / ล็อก B3" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, marginTop: '1.25rem' }}>
+              <button onClick={handleEditSave} disabled={editLoading} className="wh-btn wh-btn-gold wh-btn-full" style={{ flex: 2 }}>
+                {editLoading ? 'กำลังบันทึก...' : (
+                  <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}>
+                    <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+                    บันทึกการแก้ไข
+                  </span>
+                )}
+              </button>
+              <button onClick={() => setEditItem(null)} className="wh-btn wh-btn-ghost" style={{ flex: 1 }}>ยกเลิก</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Detail Modal ── */}
+      {viewingItem && (
+        <div className="wh-modal-overlay" onClick={e => { if (e.target === e.currentTarget) { setViewingItem(null); setImgZoom(false); } }}>
+          <div className="wh-modal" style={{ maxWidth: 520 }}>
+            <div className="wh-modal-title">
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <svg width="16" height="16" fill="none" stroke="var(--sp-gold)" strokeWidth="2.5" viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+                รายละเอียดรายการ
+              </span>
+              <button className="wh-modal-close" onClick={() => { setViewingItem(null); setImgZoom(false); }}>✕</button>
             </div>
 
             {viewingItem.item_image_url && (
-              <img src={viewingItem.item_image_url} alt="" style={{ width: '100%', height: 180, objectFit: 'cover', borderRadius: 10, marginBottom: 16, border: '1px solid #e2e8f0' }} />
+              <div style={{ marginBottom: 16, borderRadius: 12, overflow: 'hidden', cursor: 'zoom-in', position: 'relative' }}
+                onClick={() => setImgZoom(z => !z)}>
+                <img src={viewingItem.item_image_url} alt="" style={{ width: '100%', height: imgZoom ? 320 : 190, objectFit: 'cover', transition: 'height 0.3s ease', display: 'block' }} />
+                <div style={{ position: 'absolute', bottom: 8, right: 8, background: 'rgba(0,0,0,0.5)', color: '#fff', padding: '3px 8px', borderRadius: 6, fontSize: 11 }}>
+                  {imgZoom ? 'คลิกย่อ' : 'คลิกขยาย'}
+                </div>
+              </div>
             )}
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 14 }}>
+              <span className="wh-mono" style={{ background: 'linear-gradient(90deg,var(--sp-navy),var(--sp-blue))', color: '#fff', padding: '6px 20px', borderRadius: 99, fontSize: 14, fontWeight: 800, letterSpacing: 1 }}>
+                {(viewingItem.deposits as any)?.tracking_id}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               {[
-                { label: 'Tracking ID', value: viewingItem.deposits?.tracking_id, mono: true },
-                { label: 'ชื่อผู้ฝาก', value: viewingItem.deposits?.customer_name },
-                { label: 'เบอร์โทรศัพท์', value: viewingItem.deposits?.customer_phone || '—' },
+                { label: 'ชื่อผู้ฝาก', value: (viewingItem.deposits as any)?.customer_name },
+                { label: 'เบอร์โทรศัพท์', value: (viewingItem.deposits as any)?.customer_phone || '—' },
+                { label: 'พนักงานผู้รับฝาก', value: (viewingItem.deposits as any)?.staff_received_name || '—' },
                 { label: 'รายละเอียดสิ่งของ', value: viewingItem.item_name },
                 { label: 'ลักษณะเพิ่มเติม', value: viewingItem.detail || '—' },
                 { label: 'จำนวนคงเหลือ', value: `${viewingItem.remaining_quantity} / ${viewingItem.quantity} ${viewingItem.unit}` },
                 { label: 'พิกัดจัดเก็บ', value: viewingItem.storage_location || '—' },
-                { label: 'สถานะ', value: viewingItem.status || (viewingItem.remaining_quantity <= 0 ? 'คืนแล้ว' : 'กำลังฝาก') },
-              ].map((row) => (
-                <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, padding: '8px 0', borderBottom: '1px solid #f1f5f9' }}>
-                  <span style={{ fontSize: 13, color: '#64748b', whiteSpace: 'nowrap' }}>{row.label}</span>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: '#1e293b', textAlign: 'right', fontFamily: row.mono ? 'monospace' : 'inherit' }}>
-                    {row.value}
-                  </span>
+              ].map(row => (
+                <div key={row.label} className="wh-info-row">
+                  <span className="wh-info-label">{row.label}</span>
+                  <span className="wh-info-value">{row.value}</span>
                 </div>
               ))}
+              <div className="wh-info-row">
+                <span className="wh-info-label">สถานะ</span>
+                {viewingItem.status === 'คืนแล้ว' || viewingItem.remaining_quantity <= 0
+                  ? <span className="wh-badge wh-badge-returned">คืนแล้ว</span>
+                  : <span className="wh-badge wh-badge-active">
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--sp-success)', display: 'inline-block' }} />
+                      กำลังฝาก
+                    </span>
+                }
+              </div>
+            </div>
+
+            <div style={{ marginTop: 16, padding: '12px 14px', background: 'var(--sp-bg)', borderRadius: 10, border: '1px solid var(--sp-border)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, color: 'var(--sp-text3)', marginBottom: 7, fontWeight: 600 }}>
+                <span>จำนวนคืนแล้ว</span>
+                <span style={{ color: 'var(--sp-blue)', fontWeight: 800 }}>{Math.round(((viewingItem.quantity - viewingItem.remaining_quantity) / viewingItem.quantity) * 100)}%</span>
+              </div>
+              <div style={{ background: 'var(--sp-bg2)', borderRadius: 99, height: 8, overflow: 'hidden' }}>
+                <div style={{
+                  width: `${((viewingItem.quantity - viewingItem.remaining_quantity) / viewingItem.quantity) * 100}%`,
+                  height: '100%', borderRadius: 99,
+                  background: 'linear-gradient(90deg,var(--sp-gold),var(--sp-gold-lt))',
+                  transition: 'width 0.6s ease',
+                }} />
+              </div>
             </div>
 
             <div style={{ display: 'flex', gap: 8, marginTop: '1.25rem' }}>
-              <button onClick={() => handlePrint(viewingItem.id)} className="wh-btn wh-btn-primary" style={{ flex: 1 }}>
-                พิมพ์ใบรับฝาก
+              <button onClick={() => { openHistory(viewingItem); setViewingItem(null); }} className="wh-btn" style={{ flex: 1, padding: '9px', fontSize: 13, background: '#f5f3ff', color: '#7c3aed', border: '1px solid #ddd6fe', borderRadius: 9, fontWeight: 700 }}>
+                ดูประวัติการคืน
               </button>
-              <button onClick={() => setViewingItem(null)} className="wh-btn wh-btn-ghost" style={{ flex: 1 }}>
-                ปิด
+              <button onClick={() => handlePrint(viewingItem)} className="wh-btn wh-btn-primary" style={{ flex: 1 }}>
+                <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
+                  <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/>
+                </svg>
+                {viewingItem.status === 'คืนแล้ว' || viewingItem.remaining_quantity <= 0 ? 'พิมพ์ใบคืนสินค้า' : 'พิมพ์ใบรับฝาก'}
               </button>
+              <button onClick={() => { setViewingItem(null); setImgZoom(false); }} className="wh-btn wh-btn-ghost" style={{ flex: 1 }}>ปิด</button>
             </div>
           </div>
         </div>

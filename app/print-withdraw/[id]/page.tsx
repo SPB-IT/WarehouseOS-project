@@ -39,17 +39,17 @@ export default function PrintForm({ params }: { params: Promise<{ id: string }> 
   }, [id]);
 
   if (loading) return (
-    <div style={{ padding: '40px', fontFamily: 'TH Sarabun New, Arial, sans-serif', textAlign: 'center', color: '#666' }}>
+    <div style={{ padding: '40px', fontFamily: 'TH Sarabun New, Sarabun, Arial, sans-serif', textAlign: 'center', color: '#666' }}>
       กำลังเตรียมเอกสาร...
     </div>
   );
   if (error) return (
-    <div style={{ padding: '40px', fontFamily: 'TH Sarabun New, Arial, sans-serif', color: '#c00' }}>
+    <div style={{ padding: '40px', fontFamily: 'TH Sarabun New, Sarabun, Arial, sans-serif', color: '#c00' }}>
       เกิดข้อผิดพลาด: {error}
     </div>
   );
   if (!data || data.length === 0) return (
-    <div style={{ padding: '40px', fontFamily: 'TH Sarabun New, Arial, sans-serif', color: '#b45309' }}>
+    <div style={{ padding: '40px', fontFamily: 'TH Sarabun New, Sarabun, Arial, sans-serif', color: '#b45309' }}>
       ไม่พบข้อมูลใบส่งคืนสินค้าสำหรับ ID: {id}
     </div>
   );
@@ -62,147 +62,162 @@ export default function PrintForm({ params }: { params: Promise<{ id: string }> 
   const withdrawDate = rawDate
     ? new Date(rawDate).toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' })
     : '-';
-  const printedDate = new Date().toLocaleDateString('th-TH', { year: 'numeric', month: 'short', day: 'numeric' });
+  const printedDate = new Date().toLocaleDateString('th-TH', { year: 'numeric', month: 'long', day: 'numeric' });
+  const printedTime = new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' });
   const totalQty = data.reduce((sum: number, item: any) => sum + (Number(item.withdraw_quantity) || 0), 0);
+  const docNo = `RTN-${firstRecord.id || id}`;
+  const LINE = '#000';
 
   return (
     <div style={{
-      maxWidth: '210mm',
-      margin: '0 auto',
-      padding: '20mm 24mm',
-      backgroundColor: '#fff',
-      color: '#000',
-      fontFamily: 'TH Sarabun New, Arial, sans-serif',
-      fontSize: '16px',
-      minHeight: '297mm',
+      maxWidth: '210mm', margin: '0 auto', padding: '12mm 14mm',
+      backgroundColor: '#fff', color: '#1a1a1a',
+      fontFamily: 'TH Sarabun New, Sarabun, Arial, sans-serif',
+      fontSize: '13px', minHeight: '297mm',
+      lineHeight: 1.5,
     }}>
 
-      {/* Header */}
-      <div style={{ textAlign: 'center', marginBottom: '28px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', marginBottom: '10px' }}>
-          <div style={{ height: '1px', flex: 1, background: '#000' }} />
-          <span style={{ fontSize: '20px' }}>📦</span>
-          <div style={{ height: '1px', flex: 1, background: '#000' }} />
-        </div>
-        <p style={{ fontSize: '12px', letterSpacing: '0.15em', color: '#666', margin: '0 0 6px', textTransform: 'uppercase' }}>
-          Warehouse Management System
-        </p>
-        <h1 style={{ fontSize: '26px', fontWeight: 'bold', margin: '0 0 4px' }}>ใบส่งคืนสินค้า</h1>
-        <p style={{ fontSize: '14px', color: '#666', margin: 0 }}>Parcel Return Receipt</p>
-        <div style={{ height: '1px', background: '#000', marginTop: '20px' }} />
-      </div>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700;800&display=swap');
+        @media print {
+          .no-print { display: none !important; }
+          @page { margin: 0; size: A4; }
+          body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+        }
+        .doc-table { width: 100%; border-collapse: collapse; }
+        .doc-table th, .doc-table td { border: 1px solid ${LINE}; padding: 5px 8px; font-size: 13px; vertical-align: top; }
+        .doc-table th { font-weight: 700; color: #1a1a1a; text-align: left; background: #fff; }
+      `}</style>
 
-      {/* Info Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', marginBottom: '24px' }}>
-        <div style={{ padding: '12px 0', borderBottom: '0.5px solid #ccc' }}>
-          <p style={{ fontSize: '11px', color: '#888', margin: '0 0 3px', letterSpacing: '0.05em', textTransform: 'uppercase' }}>เลขที่เอกสาร (Tracking)</p>
-          <p style={{ fontSize: '15px', fontWeight: 'bold', margin: 0 }}>{allTrackingIds || '-'}</p>
-        </div>
-        <div style={{ padding: '12px 0', borderBottom: '0.5px solid #ccc', textAlign: 'right' }}>
-          <p style={{ fontSize: '11px', color: '#888', margin: '0 0 3px', letterSpacing: '0.05em', textTransform: 'uppercase' }}>วันที่ส่งคืน</p>
-          <p style={{ fontSize: '15px', fontWeight: 'bold', margin: 0 }}>{withdrawDate}</p>
-        </div>
-        <div style={{ padding: '12px 0' }}>
-          <p style={{ fontSize: '11px', color: '#888', margin: '0 0 3px', letterSpacing: '0.05em', textTransform: 'uppercase' }}>ชื่อผู้รับคืน</p>
-          <p style={{ fontSize: '15px', fontWeight: 'bold', margin: 0 }}>{allCustomerNames || '-'}</p>
-        </div>
-        <div style={{ padding: '12px 0', textAlign: 'right' }}>
-          <p style={{ fontSize: '11px', color: '#888', margin: '0 0 3px', letterSpacing: '0.05em', textTransform: 'uppercase' }}>เบอร์โทรศัพท์</p>
-          <p style={{ fontSize: '15px', fontWeight: 'bold', margin: 0 }}>{allCustomerPhones || '-'}</p>
-        </div>
-      </div>
-
-      {/* Table */}
-      <div style={{ border: '0.5px solid #ccc', borderRadius: '6px', overflow: 'hidden', marginBottom: '32px' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '15px', tableLayout: 'fixed' }}>
-          <colgroup>
-            <col style={{ width: '44px' }} />
-            <col style={{ width: '30%' }} />
-            <col />
-            <col style={{ width: '72px' }} />
-            <col style={{ width: '72px' }} />
-          </colgroup>
-          <thead>
-            <tr style={{ background: '#f5f5f5' }}>
-              {['ลำดับ', 'รายการพัสดุ', 'หมายเหตุการส่งคืน', 'จำนวน', 'หน่วย'].map((h, i) => (
-                <th key={h} style={{
-                  padding: '10px 12px',
-                  textAlign: i === 0 || i >= 3 ? 'center' : 'left',
-                  fontWeight: 'bold',
-                  color: '#555',
-                  borderBottom: '0.5px solid #ccc',
-                  fontSize: '14px',
-                }}>
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
+      {/* ══ PAGE NUMBER + DOC NO ══ */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+        <div style={{ fontSize: '11px', color: '#888' }}>หน้า 1/1</div>
+        <table style={{ borderCollapse: 'collapse' }}>
           <tbody>
-            {data.map((item: any, index: number) => (
-              <tr key={item.id} style={{ borderBottom: '0.5px solid #eee' }}>
-                <td style={{ padding: '12px', textAlign: 'center', color: '#666' }}>{index + 1}</td>
-                <td style={{ padding: '12px' }}>
-                  <div>{item.deposit_items?.item_name}</div>
-                  <span style={{ display: 'block', fontSize: '11px', color: '#999', fontFamily: 'monospace', marginTop: '2px' }}>
-                    {item.deposit_items?.deposits?.tracking_id}
-                  </span>
-                </td>
-                <td style={{ padding: '12px', color: '#444' }}>
-                  {item.remark || 'คืนสินค้าพัสดุเรียบร้อยแล้ว'}
-                </td>
-                <td style={{ padding: '12px', textAlign: 'center', fontWeight: 'bold' }}>{item.withdraw_quantity}</td>
-                <td style={{ padding: '12px', textAlign: 'center', color: '#666' }}>{item.deposit_items?.unit}</td>
-              </tr>
-            ))}
-            <tr style={{ background: '#f5f5f5' }}>
-              <td colSpan={5} style={{ padding: '10px 14px', textAlign: 'right', fontSize: '14px', color: '#666' }}>
-                รวมทั้งสิ้น: <strong style={{ color: '#000' }}>{totalQty} รายการ</strong>
-              </td>
+            <tr>
+              <td style={{ border: `1px solid ${LINE}`, padding: '3px 8px', fontSize: '12px', fontWeight: 700, whiteSpace: 'nowrap' }}>เลขที่เอกสาร</td>
+              <td style={{ border: `1px solid ${LINE}`, padding: '3px 8px', fontSize: '12px', fontFamily: 'monospace', whiteSpace: 'nowrap' }}>{docNo}</td>
+            </tr>
+            <tr>
+              <td style={{ border: `1px solid ${LINE}`, padding: '3px 8px', fontSize: '12px', fontWeight: 700, whiteSpace: 'nowrap' }}>วันที่เอกสาร</td>
+              <td style={{ border: `1px solid ${LINE}`, padding: '3px 8px', fontSize: '12px', whiteSpace: 'nowrap' }}>{withdrawDate}</td>
             </tr>
           </tbody>
         </table>
       </div>
 
-      {/* Note */}
-      <div style={{ background: '#f9f9f9', borderRadius: '6px', padding: '14px 16px', marginBottom: '40px', fontSize: '14px' }}>
-        <p style={{ margin: 0, color: '#666' }}>
-          <strong style={{ color: '#000' }}>หมายเหตุ:</strong> กรุณาตรวจสอบสินค้าก่อนลงนามรับ หากพบความเสียหายให้แจ้งเจ้าหน้าที่ทันที
-        </p>
+      {/* ══ DOCUMENT TITLE ══ */}
+      <div style={{ textAlign: 'center', fontSize: '19px', fontWeight: 800, color: '#1a1a1a', margin: '6px 0 12px' }}>ใบส่งคืนสินค้า</div>
+
+      {/* ══ INFO SECTION ══ */}
+      <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '12px' }}>
+        <tbody>
+          <tr>
+            <td style={{ border: `1px solid ${LINE}`, padding: '5px 8px', fontSize: '13px', width: '50%' }}>
+              <span style={{ fontWeight: 700 }}>ผู้รับคืน</span>
+              <span style={{ marginLeft: 10 }}>{allCustomerNames || '—'}</span>
+            </td>
+            <td style={{ border: `1px solid ${LINE}`, padding: '5px 8px', fontSize: '13px', width: '50%' }}>
+              <span style={{ fontWeight: 700 }}>วันที่ส่งคืน</span>
+              <span style={{ marginLeft: 10 }}>{withdrawDate}</span>
+            </td>
+          </tr>
+          <tr>
+            <td style={{ border: `1px solid ${LINE}`, padding: '5px 8px', fontSize: '13px' }}>
+              <span style={{ fontWeight: 700 }}>เบอร์โทรศัพท์</span>
+              <span style={{ marginLeft: 10 }}>{allCustomerPhones || '—'}</span>
+            </td>
+            <td style={{ border: `1px solid ${LINE}`, padding: '5px 8px', fontSize: '13px' }}>
+              <span style={{ fontWeight: 700 }}>พนักงานผู้ดำเนินการ</span>
+              <span style={{ marginLeft: 10 }}>{firstRecord.staff_signature_name || '—'}</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* ══ ITEMS TABLE ══ */}
+      <table className="doc-table" style={{ marginBottom: '0' }}>
+        <thead>
+          <tr>
+            <th style={{ width: '36px', textAlign: 'center' }}>ลำดับ</th>
+            <th>รายการพัสดุ</th>
+            <th style={{ width: '160px' }}>หมายเหตุการส่งคืน</th>
+            <th style={{ width: '60px', textAlign: 'center' }}>จำนวน</th>
+            <th style={{ width: '60px', textAlign: 'center' }}>หน่วยนับ</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((item: any, index: number) => (
+            <tr key={item.id}>
+              <td style={{ textAlign: 'center', color: '#444' }}>{index + 1}</td>
+              <td>
+                <div style={{ fontWeight: 700 }}>{item.deposit_items?.item_name}</div>
+                <div style={{ fontSize: '12px', color: '#777', fontFamily: 'monospace' }}>
+                  อ้างอิง: {item.deposit_items?.deposits?.tracking_id}
+                </div>
+              </td>
+              <td style={{ color: '#555' }}>{item.remark || 'คืนสินค้าพัสดุเรียบร้อยแล้ว'}</td>
+              <td style={{ textAlign: 'center', fontWeight: 700 }}>{item.withdraw_quantity}</td>
+              <td style={{ textAlign: 'center' }}>{item.deposit_items?.unit}</td>
+            </tr>
+          ))}
+          {/* filler rows to keep the form looking like a printed slip */}
+          {Array.from({ length: Math.max(0, 4 - data.length) }).map((_, i) => (
+            <tr key={`filler-${i}`}>
+              <td>&nbsp;</td><td></td><td></td><td></td><td></td>
+            </tr>
+          ))}
+          <tr>
+            <td colSpan={3} style={{ textAlign: 'right', fontWeight: 700 }}>รวม</td>
+            <td colSpan={2} style={{ textAlign: 'center', fontWeight: 800 }}>{totalQty}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* ══ NOTES (เส้นเปล่าสำหรับเขียนหมายเหตุ) ══ */}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', margin: '12px 0 30px', fontSize: '13px' }}>
+        <span style={{ fontWeight: 700, whiteSpace: 'nowrap' }}>หมายเหตุ</span>
+        <span style={{ flex: 1, borderBottom: '1px dotted #000', height: '1px' }}></span>
       </div>
 
-      {/* Signatures */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '40px' }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ height: '56px', borderBottom: '0.5px solid #000', marginBottom: '10px' }} />
-          <p style={{ fontSize: '14px', fontWeight: 'bold', margin: '0 0 3px' }}>ลงชื่อผู้ส่งคืน / เจ้าหน้าที่พัสดุ</p>
-          <p style={{ fontSize: '13px', color: '#666', margin: 0 }}>
-            ( {firstRecord.staff_signature_name || '................................................'} )
-          </p>
-          <p style={{ fontSize: '13px', color: '#666', margin: '4px 0 0' }}>วันที่ ........../........../..........​</p>
-        </div>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ height: '56px', borderBottom: '0.5px solid #000', marginBottom: '10px' }} />
-          <p style={{ fontSize: '14px', fontWeight: 'bold', margin: '0 0 3px' }}>ลงชื่อผู้รับคืน</p>
-          <p style={{ fontSize: '13px', color: '#666', margin: 0 }}>( ................................................ )</p>
-          <p style={{ fontSize: '13px', color: '#666', margin: '4px 0 0' }}>วันที่ ........../........../..........​</p>
-        </div>
+      {/* ══ SIGNATURES (แบบไม่มีกรอบ ใช้เส้นประจุดเดียวสำหรับลงชื่อ) ══ */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px', fontSize: '13px' }}>
+        {[
+          { label: 'เจ้าหน้าที่ผู้ส่งคืน', name: firstRecord.staff_signature_name },
+          { label: 'ผู้รับคืน', name: '' },
+        ].map((sig, i) => (
+          <div key={i} style={{ textAlign: 'center', width: '46%' }}>
+            <div style={{ borderBottom: '1px dotted #000', width: '70%', margin: '0 auto 14px', height: '24px' }}></div>
+            <div style={{ marginBottom: '6px' }}>
+              ( {sig.name || '\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0\u00A0'} )
+            </div>
+            <div style={{ marginBottom: '8px' }}>ตำแหน่ง .........................................</div>
+            <div style={{ fontWeight: 700 }}>{sig.label}</div>
+          </div>
+        ))}
       </div>
 
-      {/* Footer */}
-      <div style={{ height: '1px', background: '#ddd', margin: '32px 0 16px' }} />
-      <p style={{ fontSize: '12px', color: '#999', textAlign: 'center', margin: 0, letterSpacing: '0.03em' }}>
-        เอกสารนี้ออกโดยระบบ Warehouse Management System · พิมพ์เมื่อ {printedDate}
-      </p>
+      {/* ══ FOOTER ══ */}
+      <div style={{ borderTop: '1px solid #ddd', paddingTop: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ fontSize: '10px', color: '#aaa' }}>เอกสารอ้างอิง: {docNo}</div>
+        <div style={{ fontSize: '10px', color: '#aaa', textAlign: 'right' }}>
+          พิมพ์เมื่อ {printedDate} เวลา {printedTime} น.
+        </div>
+      </div>
 
       {/* Print Button */}
-      <style>{`@media print { .no-print { display: none !important; } }`}</style>
-      <div className="no-print" style={{ marginTop: '40px', textAlign: 'center' }}>
+      <div className="no-print" style={{ marginTop: '28px', textAlign: 'center', display: 'flex', gap: 12, justifyContent: 'center' }}>
         <button
           onClick={() => window.print()}
-          style={{ padding: '10px 32px', backgroundColor: '#000', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '15px', borderRadius: '6px' }}
+          style={{ padding: '10px 32px', backgroundColor: '#0e3060', color: '#fff', border: 'none', cursor: 'pointer', fontSize: '15px', borderRadius: '8px', fontWeight: 700, fontFamily: 'inherit' }}
         >
-          สั่งพิมพ์เอกสาร
+          🖨 สั่งพิมพ์เอกสาร
+        </button>
+        <button
+          onClick={() => window.close()}
+          style={{ padding: '10px 24px', backgroundColor: '#f0f4f9', color: '#0e3060', border: '1.5px solid #d1dce8', cursor: 'pointer', fontSize: '15px', borderRadius: '8px', fontWeight: 600, fontFamily: 'inherit' }}
+        >
+          ปิด
         </button>
       </div>
     </div>
