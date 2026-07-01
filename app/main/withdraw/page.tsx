@@ -1,5 +1,6 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import type { Deposit, DepositItem } from '../../../types/warehouse';
 import { Toast, useToast } from '../components/Toast';
@@ -7,6 +8,15 @@ import { Toast, useToast } from '../components/Toast';
 type WithdrawRow = DepositItem & { deposit_info: Deposit };
 
 export default function ReturnItemForm() {
+  return (
+    <Suspense fallback={<div className="wh-page" style={{ padding: 40, textAlign: 'center', color: 'var(--sp-text3)' }}>กำลังโหลด...</div>}>
+      <ReturnItemFormInner />
+    </Suspense>
+  );
+}
+
+function ReturnItemFormInner() {
+  const searchParams = useSearchParams();
   const [trackingId, setTrackingId] = useState('');
   const [staffName, setStaffName] = useState('');
   const [remark, setRemark] = useState('');
@@ -32,6 +42,12 @@ export default function ReturnItemForm() {
   };
 
   useEffect(() => { loadInventoryItems(); }, [sortBy]);
+
+  // ถ้าเข้ามาจากหน้าสรุปสินค้า (inventory) พร้อม query ?q=... ให้เติมช่องค้นหาให้อัตโนมัติ
+  useEffect(() => {
+    const q = searchParams.get('q');
+    if (q) setTrackingId(q);
+  }, [searchParams]);
 
   // เมื่อไหร่ที่มีการเปลี่ยนขนาดหน้า (PageSize) ให้รีเซ็ตกลับไปหน้า 1 ป้องกันหน้าเอ๋อ
   useEffect(() => { setCurrentPage(1); }, [pageSize]);
@@ -117,7 +133,8 @@ export default function ReturnItemForm() {
     row.deposit_info.tracking_id?.toLowerCase().includes(s) ||
     row.deposit_info.customer_name?.toLowerCase().includes(s) ||
     row.deposit_info.customer_phone?.toLowerCase().includes(s) ||
-    row.item_name?.toLowerCase().includes(s)
+    row.item_name?.toLowerCase().includes(s) ||
+    row.item_code?.toLowerCase().includes(s)
   );
 
   // คำนวณข้อมูลสำหรับ Pagination แยกตามหน้าจริง

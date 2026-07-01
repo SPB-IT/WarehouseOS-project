@@ -12,8 +12,8 @@ export default function MainPage() {
   const [recentWithdrawals, setRecentWithdrawals] = useState<Withdrawal[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetchData = async () => {
-    setLoading(true);
+  // ปรับปรุงฟังก์ชัน fetchData ให้ไม่ไปขัดจังหวะช่วงก่อน Mount
+  const fetchData = async (isMounted = true) => {
     try {
       const [
         { data: items },
@@ -23,13 +23,14 @@ export default function MainPage() {
       ] = await Promise.all([
         supabase.from('deposit_items').select('quantity, remaining_quantity, status'),
         supabase.from('deposits').select('id'),
-        // Bug #2 fix: แยก count query ออกจาก display query
         supabase.from('withdrawals').select('*', { count: 'exact', head: true }),
         supabase.from('withdrawals')
           .select('*, deposit_items(item_name, deposits(customer_name, tracking_id))')
           .order('withdraw_date', { ascending: false })
           .limit(8),
       ]);
+
+      if (!isMounted) return; // ถ้าคอมโพเนนต์ไม่ได้อยู่บนจอแล้ว ไม่ต้องทำต่อ
 
       if (items) {
         setStats({
@@ -42,11 +43,22 @@ export default function MainPage() {
         });
       }
       if (recentW) setRecentWithdrawals(recentW as Withdrawal[]);
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
+    } catch (e) { 
+      console.error(e); 
+    } finally { 
+      if (isMounted) setLoading(false); 
+    }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  // ใช้ useEffect ควบคุมลำดับการโหลดอย่างถูกต้อง
+  useEffect(() => {
+    let isMounted = true;
+    fetchData(isMounted);
+
+    return () => {
+      isMounted = false; // Cleanup เผื่อกรณีผู้ใช้งานเปลี่ยนหน้าไปที่อื่นอย่างรวดเร็ว
+    };
+  }, []);
 
   const quickLinks = [
     {
@@ -211,7 +223,7 @@ export default function MainPage() {
             <div style={{ fontSize: 11.5, fontWeight: 800, color: 'rgba(255,255,255,0.55)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 12 }}>อัตราคืนสินค้า</div>
             {!loading && stats.totalItems > 0 && (
               <>
-                <div style={{ fontSize: 2.2 + 'rem', fontWeight: 900, color: '#fff', letterSpacing: -1.5, lineHeight: 1 }}>
+                <div style={{ fontSize: '2.2rem', fontWeight: 900, color: '#fff', letterSpacing: -1.5, lineHeight: 1 }}>
                   {Math.round(((stats.totalItems - stats.totalRemaining) / stats.totalItems) * 100)}%
                 </div>
                 <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', marginTop: 4 }}>

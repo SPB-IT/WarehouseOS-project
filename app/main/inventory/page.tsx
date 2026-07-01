@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import type { DepositItem, Withdrawal } from '../../../types/warehouse';
 import { Toast, useToast } from '../components/Toast';
@@ -9,6 +10,7 @@ interface WithdrawalHistory extends Withdrawal {
 }
 
 export default function InventoryPage() {
+  const router = useRouter();
   const [items, setItems] = useState<DepositItem[]>([]);
   const [viewingItem, setViewingItem] = useState<DepositItem | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -19,6 +21,12 @@ export default function InventoryPage() {
   const [totalCount, setTotalCount] = useState(0);
   const [activeCount, setActiveCount] = useState(0);
   const [returnedCount, setReturnedCount] = useState(0);
+
+  // ── มุมมอง: แยกตามแท็กกิ้ง (list) หรือ สรุปยอดรวมตามชื่อ/รหัสสินค้า (summary) ──
+  const [viewMode, setViewMode] = useState<'list' | 'summary'>('list');
+  const [summaryItems, setSummaryItems] = useState<any[]>([]);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [breakdownGroup, setBreakdownGroup] = useState<any | null>(null);
 
   // เพิ่ม State สำหรับระบบเรียงลำดับ และจำนวนแถวที่ต้องการแสดงต่อหน้า (PageSize)
   const [sortBy, setSortBy] = useState<'newest' | 'oldest'>('newest');
@@ -33,7 +41,7 @@ export default function InventoryPage() {
   const [editItem, setEditItem] = useState<DepositItem | null>(null);
   const [editLoading, setEditLoading] = useState(false);
   const [editForm, setEditForm] = useState({
-    item_name: '', detail: '', quantity: 0, unit: '',
+    item_name: '', item_code: '', detail: '', quantity: 0, unit: '',
     storage_location: '', customer_name: '', customer_phone: '',
   });
 
@@ -52,6 +60,7 @@ export default function InventoryPage() {
   useEffect(() => { setPage(0); }, [debouncedSearch, statusFilter, pageSize, sortBy]);
   useEffect(() => { fetchItems(); }, [page, debouncedSearch, statusFilter, pageSize, sortBy]);
   useEffect(() => { fetchGlobalCounts(); }, []);
+  useEffect(() => { if (viewMode === 'summary') fetchSummary(); }, [viewMode, debouncedSearch, statusFilter]);
 
   const fetchItems = async () => {
     setLoading(true);
@@ -93,6 +102,82 @@ export default function InventoryPage() {
     setLoading(false);
   };
 
+  // ── ดึงข้อมูลทั้งหมดที่ตรงตามฟิลเตอร์ แล้วจัดกลุ่มรวมยอดตามรหัสสินค้า (ถ้ามี) หรือชื่อสินค้า ──
+  // สินค้าที่ "รหัสตรงกัน" จะถูกรวมเป็นกลุ่มเดียวกันก่อน ถ้าไม่มีรหัสจะรวมตาม "ชื่อตรงกัน" แทน
+  const fetchSummary = async () => {
+    setSummaryLoading(true);
+    let query = supabase
+      .from('deposit_items')
+      .select('*, deposits(id, tracking_id, customer_name, customer_phone, deposit_date, staff_received_name)');
+
+    if (statusFilter === 'กำลังฝาก') {
+      query = query.neq('status', 'คืนแล้ว').gt('remaining_quantity', 0);
+    } else if (statusFilter === 'คืนแล้ว') {
+      query = query.or('status.eq.คืนแล้ว,remaining_quantity.lte.0');
+    }
+
+    const s = debouncedSearch.trim().replace(/[,()%]/g, '');
+    if (s) {
+      const { data: matchedDeposits } = await supabase
+        .from('deposits')
+        .select('id')
+        .or(`tracking_id.ilike.%${s}%,customer_name.ilike.%${s}%,customer_phone.ilike.%${s}%`);
+      const depositIds = (matchedDeposits || []).map((d: any) => d.id);
+
+      if (depositIds.length > 0) {
+        query = query.or(`item_name.ilike.%${s}%,item_code.ilike.%${s}%,deposit_id.in.(${depositIds.join(',')})`);
+      } else {
+        query = query.or(`item_name.ilike.%${s}%,item_code.ilike.%${s}%`);
+      }
+    }
+
+    const { data } = await query;
+
+    const groups = new Map<string, {
+      key: string; item_name: string; item_code: string; unit: string;
+      totalRemaining: number; totalQuantity: number; trackingCount: number;
+      locations: Set<string>; anyActive: boolean; items: DepositItem[];
+    }>();
+
+    (data || []).forEach((item: any) => {
+      const codeKey = (item.item_code || '').trim().toLowerCase();
+      const nameKey = (item.item_name || '').trim().toLowerCase();
+      // จัดกลุ่มตามรหัสสินค้าก่อนถ้ามี ไม่งั้นใช้ชื่อสินค้าแทน
+      const key = codeKey ? `code:${codeKey}` : `name:${nameKey}`;
+
+      if (!groups.has(key)) {
+        groups.set(key, {
+          key,
+          item_name: item.item_name || '—',
+          item_code: item.item_code || '',
+          unit: item.unit || '',
+          totalRemaining: 0,
+          totalQuantity: 0,
+          trackingCount: 0,
+          locations: new Set<string>(),
+          anyActive: false,
+          items: [],
+        });
+      }
+      const g = groups.get(key)!;
+      g.totalRemaining += Number(item.remaining_quantity) || 0;
+      g.totalQuantity += Number(item.quantity) || 0;
+      g.trackingCount += 1;
+      if (item.storage_location) g.locations.add(item.storage_location);
+      if (!g.item_code && item.item_code) g.item_code = item.item_code;
+      const isReturned = item.status === 'คืนแล้ว' || item.remaining_quantity <= 0;
+      if (!isReturned) g.anyActive = true;
+      g.items.push(item);
+    });
+
+    const grouped = Array.from(groups.values())
+      .map(g => ({ ...g, locations: Array.from(g.locations) }))
+      .sort((a, b) => b.totalRemaining - a.totalRemaining || a.item_name.localeCompare(b.item_name, 'th'));
+
+    setSummaryItems(grouped);
+    setSummaryLoading(false);
+  };
+
   const handlePrint = (item: DepositItem) => {
     const isReturned = item.status === 'คืนแล้ว' || item.remaining_quantity <= 0;
     const w = 800, h = 900;
@@ -123,6 +208,7 @@ export default function InventoryPage() {
     setEditItem(item);
     setEditForm({
       item_name: item.item_name || '',
+      item_code: item.item_code || '',
       detail: item.detail || '',
       quantity: item.quantity,
       unit: item.unit || '',
@@ -138,6 +224,7 @@ export default function InventoryPage() {
     try {
       const { error: itemErr } = await supabase.from('deposit_items').update({
         item_name: editForm.item_name,
+        item_code: editForm.item_code || null,
         detail: editForm.detail,
         quantity: editForm.quantity,
         unit: editForm.unit,
@@ -172,7 +259,7 @@ export default function InventoryPage() {
     if (!data) { setExportLoading(false); return; }
 
     const rows = [
-      ['Tracking ID', 'ชื่อผู้ฝาก', 'เบอร์โทร', 'วันที่รับฝาก', 'พนักงานผู้รับฝาก', 'ชื่อสิ่งของ', 'รายละเอียด', 'จำนวนทั้งหมด', 'คงเหลือ', 'หน่วย', 'ตำแหน่งเก็บ', 'สถานะ'],
+      ['Tracking ID', 'ชื่อผู้ฝาก', 'เบอร์โทร', 'วันที่รับฝาก', 'พนักงานผู้รับฝาก', 'ชื่อสิ่งของ', 'รหัสสินค้า', 'รายละเอียด', 'จำนวนทั้งหมด', 'คงเหลือ', 'หน่วย', 'ตำแหน่งเก็บ', 'สถานะ'],
       ...data.map((item: any) => [
         item.deposits?.tracking_id || '',
         item.deposits?.customer_name || '',
@@ -180,6 +267,7 @@ export default function InventoryPage() {
         item.deposits?.deposit_date ? item.deposits.deposit_date.split('T')[0] : '',
         item.deposits?.staff_received_name || '',
         item.item_name || '',
+        item.item_code || '',
         item.detail || '',
         item.quantity,
         item.remaining_quantity,
@@ -279,39 +367,71 @@ export default function InventoryPage() {
           ))}
         </div>
 
-        {/* ตัวเลือกจัดเรียงลำดับข้อมูล */}
-        <select
-          value={sortBy}
-          onChange={e => setSortBy(e.target.value as 'newest' | 'oldest')}
-          style={{ padding: '9px 12px', borderRadius: 8, border: '1px solid #d9e2ec', background: '#f0f4f8', fontSize: 13, color: '#334e68', cursor: 'pointer', outline: 'none' }}
-        >
-          <option value="newest">เรียงตาม: วันใหม่สุด</option>
-          <option value="oldest">เรียงตาม: วันเก่าสุด</option>
-        </select>
+        {/* สลับมุมมอง: แยกตามแท็กกิ้ง / สรุปยอดรวมตามสินค้า */}
+        <div className="wh-flex-row" style={{ gap: 4, background: '#eef2f7', padding: 3, borderRadius: 9 }}>
+          <button
+            type="button"
+            onClick={() => setViewMode('list')}
+            style={{
+              padding: '7px 12px', fontSize: 12.5, fontWeight: 700, borderRadius: 7, border: 'none', cursor: 'pointer',
+              background: viewMode === 'list' ? '#fff' : 'transparent',
+              color: viewMode === 'list' ? 'var(--sp-navy)' : 'var(--sp-text3)',
+              boxShadow: viewMode === 'list' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none',
+            }}
+          >
+            แยกรายการ
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('summary')}
+            style={{
+              padding: '7px 12px', fontSize: 12.5, fontWeight: 700, borderRadius: 7, border: 'none', cursor: 'pointer',
+              background: viewMode === 'summary' ? '#fff' : 'transparent',
+              color: viewMode === 'summary' ? 'var(--sp-navy)' : 'var(--sp-text3)',
+              boxShadow: viewMode === 'summary' ? '0 1px 3px rgba(0,0,0,0.12)' : 'none',
+            }}
+          >
+            สรุปยอดสินค้า
+          </button>
+        </div>
 
-        {/* ตัวเลือกจำนวนรายการที่แสดงผลต่อหน้า */}
-        <select
-          value={pageSize}
-          onChange={e => setPageSize(Number(e.target.value))}
-          style={{ padding: '9px 12px', borderRadius: 8, border: '1px solid #d9e2ec', background: '#f0f4f8', fontSize: 13, color: '#334e68', cursor: 'pointer', outline: 'none' }}
-        >
-          <option value={10}>แสดง 10 รายการ</option>
-          <option value={20}>แสดง 20 รายการ</option>
-          <option value={30}>แสดง 30 รายการ</option>
-          <option value={50}>แสดง 50 รายการ</option>
-        </select>
+        {/* ตัวเลือกจัดเรียงลำดับข้อมูล */}
+        {viewMode === 'list' && (
+          <>
+            <select
+              value={sortBy}
+              onChange={e => setSortBy(e.target.value as 'newest' | 'oldest')}
+              style={{ padding: '9px 12px', borderRadius: 8, border: '1px solid #d9e2ec', background: '#f0f4f8', fontSize: 13, color: '#334e68', cursor: 'pointer', outline: 'none' }}
+            >
+              <option value="newest">เรียงตาม: วันใหม่สุด</option>
+              <option value="oldest">เรียงตาม: วันเก่าสุด</option>
+            </select>
+
+            {/* ตัวเลือกจำนวนรายการที่แสดงผลต่อหน้า */}
+            <select
+              value={pageSize}
+              onChange={e => setPageSize(Number(e.target.value))}
+              style={{ padding: '9px 12px', borderRadius: 8, border: '1px solid #d9e2ec', background: '#f0f4f8', fontSize: 13, color: '#334e68', cursor: 'pointer', outline: 'none' }}
+            >
+              <option value={10}>แสดง 10 รายการ</option>
+              <option value={20}>แสดง 20 รายการ</option>
+              <option value={30}>แสดง 30 รายการ</option>
+              <option value={50}>แสดง 50 รายการ</option>
+            </select>
+          </>
+        )}
 
         {/* ปุ่มรีเฟรชข้อมูล */}
         <button
           type="button"
-          onClick={() => { fetchItems(); fetchGlobalCounts(); }}
-          disabled={loading}
+          onClick={() => { if (viewMode === 'summary') fetchSummary(); else fetchItems(); fetchGlobalCounts(); }}
+          disabled={loading || summaryLoading}
           style={{
             display: 'flex', alignItems: 'center', gap: 6, padding: '9px 14px', borderRadius: 8,
             border: '1px solid #d9e2ec', background: '#fff', fontSize: 13, color: '#334e68', fontWeight: 500, cursor: 'pointer', height: 38
           }}
         >
-          <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }}>
+          <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" style={{ animation: (loading || summaryLoading) ? 'spin 1s linear infinite' : 'none' }}>
             <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
           </svg>
           รีเฟรช
@@ -319,6 +439,65 @@ export default function InventoryPage() {
       </div>
 
       {/* Table */}
+      {viewMode === 'summary' ? (
+        <div className="wh-card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div className="wh-table-wrap">
+            <table className="wh-table">
+              <thead>
+                <tr>
+                  <th>ชื่อสินค้า</th>
+                  <th>รหัสสินค้า</th>
+                  <th style={{ textAlign: 'center' }}>คงเหลือรวมในคลัง</th>
+                  <th style={{ textAlign: 'center' }}>รับฝากรวมสะสม</th>
+                  <th style={{ textAlign: 'center' }}>จำนวนแท็กกิ้งที่เกี่ยวข้อง</th>
+                  <th>ตำแหน่งจัดเก็บ</th>
+                  <th style={{ textAlign: 'center' }}>จัดการ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summaryLoading ? (
+                  <tr><td colSpan={7} className="wh-empty-row">กำลังโหลดข้อมูล...</td></tr>
+                ) : summaryItems.length === 0 ? (
+                  <tr><td colSpan={7} className="wh-empty-row">ไม่พบข้อมูลที่ค้นหา</td></tr>
+                ) : summaryItems.map(g => (
+                  <tr key={g.key}>
+                    <td style={{ fontWeight: 700, color: 'var(--sp-text)' }}>{g.item_name}</td>
+                    <td>
+                      {g.item_code
+                        ? <span className="wh-mono" style={{ color: 'var(--sp-blue-md)', fontWeight: 800, fontSize: 12.5, background: '#deeafa', padding: '3px 8px', borderRadius: 6 }}>{g.item_code}</span>
+                        : <span style={{ color: 'var(--sp-text3)' }}>—</span>}
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      <span style={{ fontSize: 15, fontWeight: 900, color: g.totalRemaining > 0 ? 'var(--sp-blue)' : 'var(--sp-text3)' }}>
+                        {g.totalRemaining} {g.unit}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'center', color: 'var(--sp-text2)' }}>{g.totalQuantity} {g.unit}</td>
+                    <td style={{ textAlign: 'center', color: 'var(--sp-text2)' }}>{g.trackingCount}</td>
+                    <td style={{ color: 'var(--sp-text2)', fontSize: 13 }}>{g.locations.length ? g.locations.join(', ') : '—'}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      <div className="wh-flex-row" style={{ justifyContent: 'center', gap: 5, flexWrap: 'wrap' }}>
+                        <button onClick={() => setBreakdownGroup(g)} className="wh-btn" style={{ padding: '5px 10px', fontSize: 12, background: '#deeafa', color: 'var(--sp-blue)', border: '1px solid #b3d0f0', borderRadius: 7 }}>
+                          ดูรายการย่อย
+                        </button>
+                        {g.anyActive && (
+                          <button
+                            onClick={() => router.push(`/main/withdraw?q=${encodeURIComponent(g.item_code || g.item_name)}`)}
+                            className="wh-btn"
+                            style={{ padding: '5px 10px', fontSize: 12, background: '#dcfce7', color: 'var(--sp-success)', border: '1px solid #bbf7d0', borderRadius: 7 }}
+                          >
+                            คืนสินค้า
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
       <div className="wh-card" style={{ padding: 0, overflow: 'hidden' }}>
         <div className="wh-table-wrap">
           <table className="wh-table">
@@ -366,7 +545,10 @@ export default function InventoryPage() {
                       <div style={{ fontSize: 12, color: 'var(--sp-text3)', marginTop: 2 }}>{(item.deposits as any)?.customer_phone || '—'}</div>
                     </td>
                     <td>
-                      <div style={{ fontWeight: 700, color: 'var(--sp-text)' }}>{item.item_name}</div>
+                      <div style={{ fontWeight: 700, color: 'var(--sp-text)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {item.item_name}
+                        {item.item_code && <span className="wh-mono" style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--sp-text3)', background: 'var(--sp-bg2)', padding: '1px 6px', borderRadius: 5 }}>{item.item_code}</span>}
+                      </div>
                       {item.detail && <div style={{ fontSize: 12, color: 'var(--sp-text3)', marginTop: 2 }}>{item.detail}</div>}
                       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 7 }}>
                         <div style={{ flex: 1, background: 'var(--sp-bg2)', borderRadius: 99, height: 5, overflow: 'hidden' }}>
@@ -428,6 +610,86 @@ export default function InventoryPage() {
           </div>
         )}
       </div>
+      )}
+
+      {/* ── Breakdown Modal (จากมุมมองสรุป: แสดงรายการย่อยตามแท็กกิ้ง) ── */}
+      {breakdownGroup && (
+        <div className="wh-modal-overlay" onClick={e => { if (e.target === e.currentTarget) setBreakdownGroup(null); }}>
+          <div className="wh-modal" style={{ maxWidth: 640 }}>
+            <div className="wh-modal-title">
+              <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <svg width="16" height="16" fill="none" stroke="var(--sp-gold)" strokeWidth="2.5" viewBox="0 0 24 24">
+                  <path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18M3 9v10a2 2 0 0 0 2 2h4M21 9v10a2 2 0 0 1-2 2h-4"/>
+                </svg>
+                {breakdownGroup.item_name} — รายการย่อยตามแท็กกิ้ง
+              </span>
+              <button className="wh-modal-close" onClick={() => setBreakdownGroup(null)}>✕</button>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+              <div style={{ flex: 1, background: '#deeafa', borderRadius: 9, padding: '10px 14px', textAlign: 'center', border: '1px solid #b3d0f0' }}>
+                <div style={{ fontSize: 11, color: 'var(--sp-text3)', fontWeight: 700, letterSpacing: 0.5 }}>คงเหลือรวม</div>
+                <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--sp-blue)', lineHeight: 1.2 }}>{breakdownGroup.totalRemaining} {breakdownGroup.unit}</div>
+              </div>
+              <div style={{ flex: 1, background: 'var(--sp-bg)', borderRadius: 9, padding: '10px 14px', textAlign: 'center', border: '1px solid var(--sp-border)' }}>
+                <div style={{ fontSize: 11, color: 'var(--sp-text3)', fontWeight: 700, letterSpacing: 0.5 }}>จำนวนแท็กกิ้ง</div>
+                <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--sp-text)', lineHeight: 1.2 }}>{breakdownGroup.trackingCount}</div>
+              </div>
+            </div>
+
+            <div style={{ maxHeight: 360, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {breakdownGroup.items.map((item: any) => {
+                const isReturned = item.status === 'คืนแล้ว' || item.remaining_quantity <= 0;
+                return (
+                  <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: isReturned ? 'var(--sp-bg)' : '#f8fbff', border: `1px solid ${isReturned ? 'var(--sp-border)' : '#d0e4f7'}`, borderRadius: 9, flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1, minWidth: 160 }}>
+                      <span className="wh-mono" style={{ color: 'var(--sp-blue-md)', fontWeight: 800, fontSize: 12, background: '#deeafa', padding: '2px 8px', borderRadius: 6 }}>
+                        {(item.deposits as any)?.tracking_id}
+                      </span>
+                      <div style={{ fontSize: 12.5, marginTop: 4, color: 'var(--sp-text2)' }}>{(item.deposits as any)?.customer_name || '—'}</div>
+                      <div style={{ fontSize: 12, marginTop: 2, fontWeight: 700, color: isReturned ? 'var(--sp-text3)' : 'var(--sp-blue)' }}>
+                        {item.remaining_quantity}/{item.quantity} {item.unit}
+                        {item.storage_location && <span style={{ fontWeight: 400, color: 'var(--sp-text3)' }}> · 📍 {item.storage_location}</span>}
+                      </div>
+                    </div>
+                    <div className="wh-flex-row" style={{ gap: 5, flexWrap: 'wrap' }}>
+                      <button onClick={() => { setViewingItem(item); setBreakdownGroup(null); }} className="wh-btn" style={{ padding: '5px 10px', fontSize: 12, background: '#deeafa', color: 'var(--sp-blue)', border: '1px solid #b3d0f0', borderRadius: 7 }}>
+                        ดูข้อมูล
+                      </button>
+                      <button onClick={() => { openHistory(item); setBreakdownGroup(null); }} className="wh-btn" style={{ padding: '5px 10px', fontSize: 12, background: '#f5f3ff', color: '#7c3aed', border: '1px solid #ddd6fe', borderRadius: 7 }}>
+                        ประวัติ
+                      </button>
+                      <button onClick={() => { openEdit(item); setBreakdownGroup(null); }} className="wh-btn" style={{ padding: '5px 10px', fontSize: 12, background: 'var(--sp-gold-bg)', color: '#92400e', border: '1px solid #f0d99a', borderRadius: 7 }}>
+                        แก้ไข
+                      </button>
+                      <button onClick={() => handlePrint(item)} className="wh-btn" style={{
+                        padding: '5px 10px', fontSize: 12, borderRadius: 7, fontWeight: 700,
+                        background: isReturned ? '#f5f3ff' : '#dcfce7',
+                        color: isReturned ? '#7c3aed' : 'var(--sp-success)',
+                        border: `1px solid ${isReturned ? '#ddd6fe' : '#bbf7d0'}`,
+                      }}>
+                        {isReturned ? 'ปริ้นใบคืน' : 'ปริ้นใบฝาก'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, marginTop: '1.25rem' }}>
+              {breakdownGroup.anyActive && (
+                <button
+                  onClick={() => router.push(`/main/withdraw?q=${encodeURIComponent(breakdownGroup.item_code || breakdownGroup.item_name)}`)}
+                  className="wh-btn wh-btn-primary" style={{ flex: 1 }}
+                >
+                  คืนสินค้า — เลือกแท็กกิ้ง →
+                </button>
+              )}
+              <button onClick={() => setBreakdownGroup(null)} className="wh-btn wh-btn-ghost" style={{ flex: 1 }}>ปิด</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── History Modal ── */}
       {historyItem && (
@@ -549,6 +811,10 @@ export default function InventoryPage() {
                     <input className="wh-input" value={editForm.item_name} onChange={e => setEditForm(f => ({ ...f, item_name: e.target.value }))} />
                   </div>
                   <div style={{ gridColumn: '1 / -1' }}>
+                    <label className="wh-label">รหัสสินค้า</label>
+                    <input className="wh-input" value={editForm.item_code} onChange={e => setEditForm(f => ({ ...f, item_code: e.target.value }))} placeholder="เช่น SKU-001 (ถ้ามี)" />
+                  </div>
+                  <div style={{ gridColumn: '1 / -1' }}>
                     <label className="wh-label">ลักษณะเพิ่มเติม</label>
                     <input className="wh-input" value={editForm.detail} onChange={e => setEditForm(f => ({ ...f, detail: e.target.value }))} />
                   </div>
@@ -619,6 +885,7 @@ export default function InventoryPage() {
                 { label: 'เบอร์โทรศัพท์', value: (viewingItem.deposits as any)?.customer_phone || '—' },
                 { label: 'พนักงานผู้รับฝาก', value: (viewingItem.deposits as any)?.staff_received_name || '—' },
                 { label: 'รายละเอียดสิ่งของ', value: viewingItem.item_name },
+                { label: 'รหัสสินค้า', value: viewingItem.item_code || '—' },
                 { label: 'ลักษณะเพิ่มเติม', value: viewingItem.detail || '—' },
                 { label: 'จำนวนคงเหลือ', value: `${viewingItem.remaining_quantity} / ${viewingItem.quantity} ${viewingItem.unit}` },
                 { label: 'พิกัดจัดเก็บ', value: viewingItem.storage_location || '—' },

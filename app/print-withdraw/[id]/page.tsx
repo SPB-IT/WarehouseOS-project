@@ -152,9 +152,11 @@ export default function PrintForm({ params }: { params: Promise<{ id: string }> 
               <td style={{ textAlign: 'center', color: '#444' }}>{index + 1}</td>
               <td>
                 <div style={{ fontWeight: 700 }}>{item.deposit_items?.item_name}</div>
-                <div style={{ fontSize: '12px', color: '#777', fontFamily: 'monospace' }}>
-                  อ้างอิง: {item.deposit_items?.deposits?.tracking_id}
-                </div>
+                {item.deposit_items?.detail && (
+                  <div style={{ fontSize: '12px', color: '#777' }}>
+                    {item.deposit_items.detail}
+                  </div>
+                )}
               </td>
               <td style={{ color: '#555' }}>{item.remark || 'คืนสินค้าพัสดุเรียบร้อยแล้ว'}</td>
               <td style={{ textAlign: 'center', fontWeight: 700 }}>{item.withdraw_quantity}</td>

@@ -32,7 +32,7 @@ export default function DepositPage() {
   const formRef = useRef<HTMLFormElement>(null);
 
   const [editingItem, setEditingItem] = useState<DepositItem | null>(null);
-  const [editItemForm, setEditItemForm] = useState({ item_name: '', detail: '', quantity: 0, unit: '', storage_location: '' });
+  const [editItemForm, setEditItemForm] = useState({ item_name: '', item_code: '', detail: '', quantity: 0, unit: '', storage_location: '' });
   const [editItemLoading, setEditItemLoading] = useState(false);
 
   const [successModal, setSuccessModal] = useState<{ trackingId: string; depositId: number } | null>(null);
@@ -91,6 +91,7 @@ export default function DepositPage() {
       const newItems = formItems.map(item => ({
         deposit_id: editingDeposit.id,
         item_name: formData.get(`item_name_${item.id}`),
+        item_code: formData.get(`item_code_${item.id}`) || null,
         quantity: parseInt(formData.get(`quantity_${item.id}`) as string) || 0,
         remaining_quantity: parseInt(formData.get(`quantity_${item.id}`) as string) || 0,
         unit: formData.get(`unit_${item.id}`),
@@ -126,6 +127,7 @@ export default function DepositPage() {
       const itemsToSave = formItems.map(item => ({
         deposit_id: deposit.id,
         item_name: formData.get(`item_name_${item.id}`),
+        item_code: formData.get(`item_code_${item.id}`) || null,
         quantity: parseInt(formData.get(`quantity_${item.id}`) as string),
         remaining_quantity: parseInt(formData.get(`quantity_${item.id}`) as string),
         unit: formData.get(`unit_${item.id}`),
@@ -170,6 +172,7 @@ export default function DepositPage() {
     setEditingItem(item);
     setEditItemForm({
       item_name: item.item_name || '',
+      item_code: item.item_code || '',
       detail: item.detail || '',
       quantity: item.quantity,
       unit: item.unit || '',
@@ -182,6 +185,7 @@ export default function DepositPage() {
     setEditItemLoading(true);
     const { error } = await supabase.from('deposit_items').update({
       item_name: editItemForm.item_name,
+      item_code: editItemForm.item_code || null,
       detail: editItemForm.detail,
       quantity: editItemForm.quantity,
       unit: editItemForm.unit,
@@ -331,6 +335,10 @@ export default function DepositPage() {
                             <input name={`item_name_${item.id}`} className="wh-input" placeholder="ระบุชื่อสิ่งของ..." required={!editingDeposit} />
                           </div>
                           <div>
+                            <label className="wh-label">รหัสสินค้า</label>
+                            <input name={`item_code_${item.id}`} className="wh-input" placeholder="เช่น SKU-001 (ถ้ามี)" />
+                          </div>
+                          <div>
                             <label className="wh-label">ลักษณะเพิ่มเติม</label>
                             <textarea name={`detail_${item.id}`} className="wh-textarea" placeholder="รายละเอียด / ลักษณะของสิ่งของ..." style={{ minHeight: 52 }} />
                           </div>
@@ -407,6 +415,10 @@ export default function DepositPage() {
               <div>
                 <label className="wh-label">ชื่อสิ่งของ</label>
                 <input className="wh-input" value={editItemForm.item_name} onChange={e => setEditItemForm(f => ({ ...f, item_name: e.target.value }))} />
+              </div>
+              <div>
+                <label className="wh-label">รหัสสินค้า</label>
+                <input className="wh-input" value={editItemForm.item_code} onChange={e => setEditItemForm(f => ({ ...f, item_code: e.target.value }))} placeholder="เช่น SKU-001 (ถ้ามี)" />
               </div>
               <div>
                 <label className="wh-label">ลักษณะเพิ่มเติม</label>
@@ -578,7 +590,10 @@ export default function DepositPage() {
                               : <div style={{ width: 34, height: 34, background: 'var(--sp-bg2)', borderRadius: 6, border: '1.5px dashed var(--sp-border)', flexShrink: 0 }} />
                             }
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <div style={{ fontWeight: 700, fontSize: 13, color: isRet ? 'var(--sp-text3)' : 'var(--sp-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.item_name}</div>
+                              <div style={{ fontWeight: 700, fontSize: 13, color: isRet ? 'var(--sp-text3)' : 'var(--sp-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                {item.item_name}
+                                {item.item_code && <span className="wh-mono" style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--sp-text3)', background: 'var(--sp-bg2)', padding: '1px 6px', borderRadius: 5 }}>{item.item_code}</span>}
+                              </div>
                               {item.detail && <div style={{ fontSize: 11, color: 'var(--sp-text3)' }}>{item.detail}</div>}
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
                                 <div style={{ flex: 1, background: 'var(--sp-bg2)', borderRadius: 99, height: 4, overflow: 'hidden', maxWidth: 70 }}>

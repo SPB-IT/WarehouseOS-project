@@ -15,6 +15,7 @@ export interface DepositItem {
   id: number;
   deposit_id: number;
   item_name: string;
+  item_code?: string;
   quantity: number;
   remaining_quantity: number;
   unit: string;
