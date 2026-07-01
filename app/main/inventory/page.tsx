@@ -27,6 +27,8 @@ export default function InventoryPage() {
   const [summaryItems, setSummaryItems] = useState<any[]>([]);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [breakdownGroup, setBreakdownGroup] = useState<any | null>(null);
+  const [summaryPage, setSummaryPage] = useState(0);
+  const [summaryPageSize, setSummaryPageSize] = useState<number>(10);
 
   // เพิ่ม State สำหรับระบบเรียงลำดับ และจำนวนแถวที่ต้องการแสดงต่อหน้า (PageSize)
   const [sortBy, setSortBy] = useState<'newest' | 'oldest'>('newest');
@@ -61,6 +63,7 @@ export default function InventoryPage() {
   useEffect(() => { fetchItems(); }, [page, debouncedSearch, statusFilter, pageSize, sortBy]);
   useEffect(() => { fetchGlobalCounts(); }, []);
   useEffect(() => { if (viewMode === 'summary') fetchSummary(); }, [viewMode, debouncedSearch, statusFilter]);
+  useEffect(() => { setSummaryPage(0); }, [debouncedSearch, statusFilter, summaryPageSize, viewMode]);
 
   const fetchItems = async () => {
     setLoading(true);
@@ -395,8 +398,8 @@ export default function InventoryPage() {
           </button>
         </div>
 
-        {/* ตัวเลือกจัดเรียงลำดับข้อมูล */}
-        {viewMode === 'list' && (
+        {/* ตัวเลือกจัดเรียงลำดับข้อมูล + จำนวนรายการต่อหน้า */}
+        {viewMode === 'list' ? (
           <>
             <select
               value={sortBy}
@@ -419,6 +422,17 @@ export default function InventoryPage() {
               <option value={50}>แสดง 50 รายการ</option>
             </select>
           </>
+        ) : (
+          <select
+            value={summaryPageSize}
+            onChange={e => { setSummaryPageSize(Number(e.target.value)); setSummaryPage(0); }}
+            style={{ padding: '9px 12px', borderRadius: 8, border: '1px solid #d9e2ec', background: '#f0f4f8', fontSize: 13, color: '#334e68', cursor: 'pointer', outline: 'none' }}
+          >
+            <option value={10}>แสดง 10 รายการ</option>
+            <option value={20}>แสดง 20 รายการ</option>
+            <option value={30}>แสดง 30 รายการ</option>
+            <option value={50}>แสดง 50 รายการ</option>
+          </select>
         )}
 
         {/* ปุ่มรีเฟรชข้อมูล */}
@@ -439,7 +453,10 @@ export default function InventoryPage() {
       </div>
 
       {/* Table */}
-      {viewMode === 'summary' ? (
+      {viewMode === 'summary' ? (() => {
+        const summaryTotalPages = Math.max(1, Math.ceil(summaryItems.length / summaryPageSize));
+        const pagedSummaryItems = summaryItems.slice(summaryPage * summaryPageSize, summaryPage * summaryPageSize + summaryPageSize);
+        return (
         <div className="wh-card" style={{ padding: 0, overflow: 'hidden' }}>
           <div className="wh-table-wrap">
             <table className="wh-table">
@@ -459,7 +476,7 @@ export default function InventoryPage() {
                   <tr><td colSpan={7} className="wh-empty-row">กำลังโหลดข้อมูล...</td></tr>
                 ) : summaryItems.length === 0 ? (
                   <tr><td colSpan={7} className="wh-empty-row">ไม่พบข้อมูลที่ค้นหา</td></tr>
-                ) : summaryItems.map(g => (
+                ) : pagedSummaryItems.map(g => (
                   <tr key={g.key}>
                     <td style={{ fontWeight: 700, color: 'var(--sp-text)' }}>{g.item_name}</td>
                     <td>
@@ -496,8 +513,22 @@ export default function InventoryPage() {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination — โหมดสรุปยอด */}
+          {summaryTotalPages > 1 && (
+            <div style={{ padding: '12px 20px', borderTop: '1.5px solid var(--sp-bg2)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 12.5, color: 'var(--sp-text3)' }}>
+                หน้า {summaryPage + 1} / {summaryTotalPages} &nbsp;(แสดง {summaryPage * summaryPageSize + 1}–{Math.min((summaryPage + 1) * summaryPageSize, summaryItems.length)} จาก {summaryItems.length} รายการ)
+              </span>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button onClick={() => setSummaryPage(p => Math.max(0, p - 1))} disabled={summaryPage === 0} className="wh-btn wh-btn-ghost" style={{ padding: '6px 14px', fontSize: 13, opacity: summaryPage === 0 ? 0.4 : 1 }}>← ก่อนหน้า</button>
+                <button onClick={() => setSummaryPage(p => Math.min(summaryTotalPages - 1, p + 1))} disabled={summaryPage >= summaryTotalPages - 1} className="wh-btn wh-btn-ghost" style={{ padding: '6px 14px', fontSize: 13, opacity: summaryPage >= summaryTotalPages - 1 ? 0.4 : 1 }}>ถัดไป →</button>
+              </div>
+            </div>
+          )}
         </div>
-      ) : (
+        );
+      })() : (
       <div className="wh-card" style={{ padding: 0, overflow: 'hidden' }}>
         <div className="wh-table-wrap">
           <table className="wh-table">
