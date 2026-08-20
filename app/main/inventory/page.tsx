@@ -4,9 +4,32 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
 import type { DepositItem, Withdrawal } from '../../../types/warehouse';
 import { Toast, useToast } from '../components/Toast';
+import type { WarehouseBin, WarehouseRack, WarehouseZone } from '../warehouse-map/types';
+import {
+  fetchWarehouseBins,
+  fetchWarehouseRacks,
+  fetchWarehouseZones,
+} from '../warehouse-map/warehouseMapRepository';
+import {
+  formatWarehousePlacement,
+  getRackBins,
+  getZoneRacks,
+} from '../warehouse-map/warehousePlacement';
 
 interface WithdrawalHistory extends Withdrawal {
   deposit_items?: DepositItem & { deposits?: { tracking_id: string; customer_name: string } };
+}
+
+interface WarehouseLocationMovement {
+  id: number;
+  from_location: string | null;
+  to_location: string | null;
+  moved_by: string | null;
+  moved_at: string;
+}
+
+function formatZoneLocation(zone: WarehouseZone) {
+  return [zone.locationCode, zone.floor].filter(Boolean).join(' / ');
 }
 
 export default function InventoryPage() {
@@ -21,6 +44,9 @@ export default function InventoryPage() {
   const [totalCount, setTotalCount] = useState(0);
   const [activeCount, setActiveCount] = useState(0);
   const [returnedCount, setReturnedCount] = useState(0);
+  const [warehouseZones, setWarehouseZones] = useState<WarehouseZone[]>([]);
+  const [warehouseRacks, setWarehouseRacks] = useState<WarehouseRack[]>([]);
+  const [warehouseBins, setWarehouseBins] = useState<WarehouseBin[]>([]);
 
   // ── มุมมอง: แยกตามแท็กกิ้ง (list) หรือ สรุปยอดรวมตามชื่อ/รหัสสินค้า (summary) ──
   const [viewMode, setViewMode] = useState<'list' | 'summary'>('list');
@@ -37,6 +63,7 @@ export default function InventoryPage() {
   // ── ประวัติการรับ-คืน ──
   const [historyItem, setHistoryItem] = useState<DepositItem | null>(null);
   const [historyData, setHistoryData] = useState<WithdrawalHistory[]>([]);
+  const [locationHistory, setLocationHistory] = useState<WarehouseLocationMovement[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
   // ── Edit modal ──
@@ -44,7 +71,8 @@ export default function InventoryPage() {
   const [editLoading, setEditLoading] = useState(false);
   const [editForm, setEditForm] = useState({
     item_name: '', item_code: '', detail: '', quantity: 0, unit: '',
-    storage_location: '', customer_name: '', customer_phone: '',
+    storage_location: '', warehouse_zone_id: '', warehouse_rack_id: '', warehouse_bin_id: '',
+    customer_name: '', customer_phone: '',
   });
 
   // ── Export ──
@@ -59,9 +87,30 @@ export default function InventoryPage() {
     return () => clearTimeout(t);
   }, [searchTerm]);
 
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      const quickSearch = new URLSearchParams(window.location.search).get('q');
+      if (quickSearch) setSearchTerm(quickSearch);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
   useEffect(() => { setPage(0); }, [debouncedSearch, statusFilter, pageSize, sortBy]);
   useEffect(() => { fetchItems(); }, [page, debouncedSearch, statusFilter, pageSize, sortBy]);
   useEffect(() => { fetchGlobalCounts(); }, []);
+  useEffect(() => {
+    void Promise.all([fetchWarehouseZones(), fetchWarehouseRacks(), fetchWarehouseBins()])
+      .then(([zones, racks, bins]) => {
+        setWarehouseZones(zones);
+        setWarehouseRacks(racks);
+        setWarehouseBins(bins);
+      })
+      .catch(() => {
+        setWarehouseZones([]);
+        setWarehouseRacks([]);
+        setWarehouseBins([]);
+      });
+  }, []);
   useEffect(() => { if (viewMode === 'summary') fetchSummary(); }, [viewMode, debouncedSearch, statusFilter]);
   useEffect(() => { setSummaryPage(0); }, [debouncedSearch, statusFilter, summaryPageSize, viewMode]);
 
@@ -73,6 +122,18 @@ export default function InventoryPage() {
     let query = supabase
       .from('deposit_items')
       .select('*, deposits(id, tracking_id, customer_name, customer_phone, deposit_date, staff_received_name)', { count: 'exact' });
+
+    const quickParams = new URLSearchParams(window.location.search);
+    const quickZoneId = quickParams.get('zoneId');
+    const quickRackId = quickParams.get('rackId');
+    const quickRackNumber = Number(quickParams.get('rack') ?? 0);
+    if (quickRackId) {
+      query = query.eq('warehouse_rack_id', quickRackId);
+    } else if (quickZoneId && quickRackNumber > 0) {
+      query = query
+        .eq('warehouse_zone_id', quickZoneId)
+        .ilike('storage_location', `%Rack ${quickRackNumber}%`);
+    }
 
     if (statusFilter === 'กำลังฝาก') {
       query = query.neq('status', 'คืนแล้ว').gt('remaining_quantity', 0);
@@ -89,9 +150,9 @@ export default function InventoryPage() {
       const depositIds = (matchedDeposits || []).map((d: any) => d.id);
 
       if (depositIds.length > 0) {
-        query = query.or(`item_name.ilike.%${s}%,deposit_id.in.(${depositIds.join(',')})`);
+        query = query.or(`item_name.ilike.%${s}%,item_code.ilike.%${s}%,storage_location.ilike.%${s}%,deposit_id.in.(${depositIds.join(',')})`);
       } else {
-        query = query.ilike('item_name', `%${s}%`);
+        query = query.or(`item_name.ilike.%${s}%,item_code.ilike.%${s}%,storage_location.ilike.%${s}%`);
       }
     }
 
@@ -113,6 +174,18 @@ export default function InventoryPage() {
       .from('deposit_items')
       .select('*, deposits(id, tracking_id, customer_name, customer_phone, deposit_date, staff_received_name)');
 
+    const quickParams = new URLSearchParams(window.location.search);
+    const quickZoneId = quickParams.get('zoneId');
+    const quickRackId = quickParams.get('rackId');
+    const quickRackNumber = Number(quickParams.get('rack') ?? 0);
+    if (quickRackId) {
+      query = query.eq('warehouse_rack_id', quickRackId);
+    } else if (quickZoneId && quickRackNumber > 0) {
+      query = query
+        .eq('warehouse_zone_id', quickZoneId)
+        .ilike('storage_location', `%Rack ${quickRackNumber}%`);
+    }
+
     if (statusFilter === 'กำลังฝาก') {
       query = query.neq('status', 'คืนแล้ว').gt('remaining_quantity', 0);
     } else if (statusFilter === 'คืนแล้ว') {
@@ -128,9 +201,9 @@ export default function InventoryPage() {
       const depositIds = (matchedDeposits || []).map((d: any) => d.id);
 
       if (depositIds.length > 0) {
-        query = query.or(`item_name.ilike.%${s}%,item_code.ilike.%${s}%,deposit_id.in.(${depositIds.join(',')})`);
+        query = query.or(`item_name.ilike.%${s}%,item_code.ilike.%${s}%,storage_location.ilike.%${s}%,deposit_id.in.(${depositIds.join(',')})`);
       } else {
-        query = query.or(`item_name.ilike.%${s}%,item_code.ilike.%${s}%`);
+        query = query.or(`item_name.ilike.%${s}%,item_code.ilike.%${s}%,storage_location.ilike.%${s}%`);
       }
     }
 
@@ -198,12 +271,26 @@ export default function InventoryPage() {
   const openHistory = async (item: DepositItem) => {
     setHistoryItem(item);
     setHistoryLoading(true);
-    const { data, error } = await supabase
-      .from('withdrawals')
-      .select('*')
-      .eq('deposit_item_id', item.id)
-      .order('withdraw_date', { ascending: false });
-    if (!error) setHistoryData((data as WithdrawalHistory[]) || []);
+    setHistoryData([]);
+    setLocationHistory([]);
+    const [withdrawalsResponse, movementsResponse] = await Promise.all([
+      supabase
+        .from('withdrawals')
+        .select('*')
+        .eq('deposit_item_id', item.id)
+        .order('withdraw_date', { ascending: false }),
+      supabase
+        .from('warehouse_location_movements')
+        .select('id, from_location, to_location, moved_by, moved_at')
+        .eq('deposit_item_id', item.id)
+        .order('moved_at', { ascending: false }),
+    ]);
+    if (!withdrawalsResponse.error) {
+      setHistoryData((withdrawalsResponse.data as WithdrawalHistory[]) || []);
+    }
+    if (!movementsResponse.error) {
+      setLocationHistory((movementsResponse.data as WarehouseLocationMovement[]) || []);
+    }
     setHistoryLoading(false);
   };
 
@@ -216,6 +303,9 @@ export default function InventoryPage() {
       quantity: item.quantity,
       unit: item.unit || '',
       storage_location: item.storage_location || '',
+      warehouse_zone_id: item.warehouse_zone_id || '',
+      warehouse_rack_id: item.warehouse_rack_id || '',
+      warehouse_bin_id: item.warehouse_bin_id || '',
       customer_name: (item.deposits as any)?.customer_name || '',
       customer_phone: (item.deposits as any)?.customer_phone || '',
     });
@@ -225,15 +315,31 @@ export default function InventoryPage() {
     if (!editItem) return;
     setEditLoading(true);
     try {
+      const selectedZone = warehouseZones.find(zone => zone.id === editForm.warehouse_zone_id);
+      const selectedRack = warehouseRacks.find(rack => rack.id === editForm.warehouse_rack_id);
+      const selectedBin = warehouseBins.find(bin => bin.id === editForm.warehouse_bin_id);
+      if (!selectedZone || !selectedRack || !selectedBin) {
+        throw new Error('กรุณาเลือกโซน, Rack และชั้น/พาเลตให้ครบ');
+      }
+      const exactLocation = formatWarehousePlacement(selectedZone, selectedRack, selectedBin);
       const { error: itemErr } = await supabase.from('deposit_items').update({
         item_name: editForm.item_name,
         item_code: editForm.item_code || null,
         detail: editForm.detail,
         quantity: editForm.quantity,
         unit: editForm.unit,
-        storage_location: editForm.storage_location,
+        warehouse_zone_id: editForm.warehouse_zone_id,
+        warehouse_rack_id: editForm.warehouse_rack_id,
+        warehouse_bin_id: editForm.warehouse_bin_id,
+        storage_location: exactLocation,
       }).eq('id', editItem.id);
       if (itemErr) throw itemErr;
+
+      const { error: locationErr } = await supabase
+        .from('deposit_items')
+        .update({ storage_location: exactLocation })
+        .eq('id', editItem.id);
+      if (locationErr) throw locationErr;
 
       const depositId = (editItem.deposits as any)?.id ?? (editItem as any).deposit_id;
       if (depositId) {
@@ -731,7 +837,7 @@ export default function InventoryPage() {
                 <svg width="16" height="16" fill="none" stroke="#7c3aed" strokeWidth="2.5" viewBox="0 0 24 24">
                   <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
                 </svg>
-                ประวัติการรับ-คืน
+                ประวัติสินค้า
               </span>
               <button className="wh-modal-close" onClick={() => setHistoryItem(null)}>✕</button>
             </div>
@@ -744,6 +850,7 @@ export default function InventoryPage() {
               </div>
             </div>
 
+            <div style={{ marginBottom: 8, fontSize: 12, fontWeight: 800, color: 'var(--sp-text2)' }}>ประวัติการคืนสินค้า</div>
             {historyLoading ? (
               <div style={{ textAlign: 'center', padding: '32px 0', color: 'var(--sp-text3)', fontSize: 13 }}>กำลังโหลดประวัติ...</div>
             ) : historyData.length === 0 ? (
@@ -794,6 +901,40 @@ export default function InventoryPage() {
                     </div>
                   );
                 })}
+              </div>
+            )}
+
+            {!historyLoading && (
+              <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--sp-border)' }}>
+                <div style={{ marginBottom: 8, fontSize: 12, fontWeight: 800, color: 'var(--sp-text2)' }}>ประวัติการย้ายตำแหน่ง</div>
+                {locationHistory.length === 0 ? (
+                  <div style={{ padding: '14px', border: '1px dashed var(--sp-border)', borderRadius: 10, color: 'var(--sp-text3)', fontSize: 12.5, textAlign: 'center' }}>
+                    ยังไม่มีประวัติการย้ายสินค้า
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 220, overflowY: 'auto' }}>
+                    {locationHistory.map((movement, idx) => {
+                      const movedAt = new Date(movement.moved_at);
+                      const dateTime = `${movedAt.getDate()}/${movedAt.getMonth() + 1}/${movedAt.getFullYear() + 543} ${movedAt.getHours().toString().padStart(2, '0')}:${movedAt.getMinutes().toString().padStart(2, '0')} น.`;
+                      return (
+                        <div key={movement.id} style={{ padding: '11px 13px', border: '1px solid var(--sp-border)', borderLeft: `3px solid ${idx === 0 ? '#2563eb' : 'var(--sp-border)'}`, borderRadius: 10, background: idx === 0 ? '#eff6ff' : 'var(--sp-bg)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 11.5, color: 'var(--sp-text3)' }}>
+                            <span>{idx === 0 ? 'ย้ายล่าสุด' : 'ย้ายตำแหน่ง'}</span>
+                            <span>{dateTime}</span>
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 8, marginTop: 7, fontSize: 12.5 }}>
+                            <span style={{ color: 'var(--sp-text3)' }}>{movement.from_location || 'ไม่ระบุตำแหน่งเดิม'}</span>
+                            <span style={{ color: '#2563eb', fontWeight: 800 }}>→</span>
+                            <strong style={{ color: 'var(--sp-navy)' }}>{movement.to_location || 'ไม่ระบุตำแหน่งใหม่'}</strong>
+                          </div>
+                          {movement.moved_by && movement.moved_by !== 'system' && (
+                            <div style={{ marginTop: 5, fontSize: 11, color: 'var(--sp-text3)' }}>โดย {movement.moved_by}</div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
 
@@ -858,8 +999,71 @@ export default function InventoryPage() {
                     <input className="wh-input" value={editForm.unit} onChange={e => setEditForm(f => ({ ...f, unit: e.target.value }))} />
                   </div>
                   <div style={{ gridColumn: '1 / -1' }}>
-                    <label className="wh-label">พิกัดจัดเก็บ</label>
-                    <input className="wh-input" value={editForm.storage_location} onChange={e => setEditForm(f => ({ ...f, storage_location: e.target.value }))} placeholder="เช่น โซน A / ชั้น 2 / ล็อก B3" />
+                    <label className="wh-label">โซนบนผังคลัง</label>
+                    <select
+                      className="wh-select"
+                      value={editForm.warehouse_zone_id}
+                      onChange={e => {
+                        setEditForm(f => ({
+                          ...f,
+                          warehouse_zone_id: e.target.value,
+                          warehouse_rack_id: '',
+                          warehouse_bin_id: '',
+                        }));
+                      }}
+                      disabled={warehouseZones.length === 0}
+                      required
+                    >
+                      <option value="">
+                        {warehouseZones.length > 0 ? '— เลือกโซน —' : 'รอเชื่อมตารางผังใน Supabase'}
+                      </option>
+                      {warehouseZones.map(zone => (
+                        <option key={zone.id} value={zone.id}>{zone.name} · {formatZoneLocation(zone)}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="wh-label">Rack</label>
+                    <select
+                      className="wh-select"
+                      value={editForm.warehouse_rack_id}
+                      onChange={e => setEditForm(f => ({ ...f, warehouse_rack_id: e.target.value, warehouse_bin_id: '' }))}
+                      disabled={!editForm.warehouse_zone_id}
+                      required
+                    >
+                      <option value="">— เลือก Rack —</option>
+                      {getZoneRacks(warehouseRacks, editForm.warehouse_zone_id).map(rack => (
+                        <option key={rack.id} value={rack.id}>Rack {rack.rackNumber}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="wh-label">ชั้น / พาเลต</label>
+                    <select
+                      className="wh-select"
+                      value={editForm.warehouse_bin_id}
+                      onChange={e => setEditForm(f => ({ ...f, warehouse_bin_id: e.target.value }))}
+                      disabled={!editForm.warehouse_rack_id}
+                      required
+                    >
+                      <option value="">— เลือกตำแหน่ง —</option>
+                      {getRackBins(warehouseBins, editForm.warehouse_rack_id).map(bin => (
+                        <option key={bin.id} value={bin.id}>ชั้น {bin.shelfLevel} · พาเลต {bin.palletNumber}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <label className="wh-label">พิกัดที่จะบันทึก</label>
+                    <input
+                      className="wh-input"
+                      value={formatWarehousePlacement(
+                        warehouseZones.find(zone => zone.id === editForm.warehouse_zone_id),
+                        warehouseRacks.find(rack => rack.id === editForm.warehouse_rack_id),
+                        warehouseBins.find(bin => bin.id === editForm.warehouse_bin_id),
+                      )}
+                      placeholder="เลือกโซน, Rack และชั้น/พาเลตให้ครบ"
+                      readOnly
+                    />
                   </div>
                 </div>
               </div>

@@ -21,6 +21,9 @@ export interface DepositItem {
   unit: string;
   status: 'กำลังฝาก' | 'คืนแล้ว';
   storage_location?: string;
+  warehouse_zone_id?: string | null;
+  warehouse_rack_id?: string | null;
+  warehouse_bin_id?: string | null;
   detail?: string;
   item_image_url?: string;
   created_at?: string;

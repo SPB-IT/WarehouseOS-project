@@ -9,6 +9,16 @@ const UserGuide = dynamic(() => import('./UserGuide'), { ssr: false });
 const navItems = [
   {
     href: '/main',
+    label: 'ค้นหาสินค้า',
+    icon: (
+      <svg width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+        <circle cx="10.5" cy="10.5" r="6.5"/>
+        <path d="m16 16 5 5"/>
+      </svg>
+    ),
+  },
+  {
+    href: '/main/dashboard',
     label: 'ภาพรวม',
     icon: (
       <svg width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
@@ -38,6 +48,16 @@ const navItems = [
       <svg width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
         <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
         <polyline points="9 22 9 12 15 12 15 22"/>
+      </svg>
+    ),
+  },
+  {
+    href: '/main/warehouse-map',
+    label: 'จัดผัง',
+    icon: (
+      <svg width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+        <path d="M3 6.5 8 4l8 3 5-2.5v13L16 20l-8-3-5 2.5z"/>
+        <path d="M8 4v13M16 7v13"/>
       </svg>
     ),
   },
