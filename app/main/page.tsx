@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabase';
+import { displayItemDetail, displayStorageLocation } from '../../lib/warehouseLocation';
 import type { WarehouseZone } from './warehouse-map/types';
 import {
   extractFloorLabel,
@@ -21,6 +22,7 @@ import {
   subscribeToWarehouseRacks,
   subscribeToWarehouseZones,
 } from './warehouse-map/warehouseMapRepository';
+import { getRackBins } from './warehouse-map/warehousePlacement';
 
 const WarehouseMapCanvas = dynamic(() => import('./warehouse-map/WarehouseMapCanvas'), {
   ssr: false,
@@ -86,23 +88,17 @@ interface RackProductGroup {
   totalRemaining: number;
   totalQuantity: number;
   shelfLevel: number;
-  palletNumber: number;
   lots: RackHoverProduct[];
 }
 
 interface RackProductSection {
   key: string;
   shelfLevel: number;
-  palletNumber: number;
   products: RackProductGroup[];
 }
 
 function extractShelfLevel(location: string | null | undefined) {
   return Number(location?.match(/ชั้น\s*(\d+)/)?.[1] ?? 0);
-}
-
-function extractPalletNumber(location: string | null | undefined) {
-  return Number(location?.match(/พาเลต\s*(\d+)/)?.[1] ?? 0);
 }
 
 function buildRackSections(items: RackHoverProduct[], searchTerm: string, positionFilter: string) {
@@ -111,8 +107,7 @@ function buildRackSections(items: RackHoverProduct[], searchTerm: string, positi
 
   items.forEach((item) => {
     const shelfLevel = extractShelfLevel(item.storage_location);
-    const palletNumber = extractPalletNumber(item.storage_location);
-    const positionKey = `L${shelfLevel}-P${palletNumber}`;
+    const positionKey = `L${shelfLevel}`;
     if (positionFilter !== 'all' && positionFilter !== positionKey) return;
     if (query && !`${item.item_name} ${item.item_code ?? ''}`.toLocaleLowerCase('th').includes(query)) return;
 
@@ -134,18 +129,16 @@ function buildRackSections(items: RackHoverProduct[], searchTerm: string, positi
       totalRemaining: Number(item.remaining_quantity) || 0,
       totalQuantity: Number(item.quantity) || 0,
       shelfLevel,
-      palletNumber,
       lots: [item],
     });
   });
 
   const sections = new Map<string, RackProductSection>();
   groups.forEach((product) => {
-    const key = `L${product.shelfLevel}-P${product.palletNumber}`;
+    const key = `L${product.shelfLevel}`;
     const section = sections.get(key) ?? {
       key,
       shelfLevel: product.shelfLevel,
-      palletNumber: product.palletNumber,
       products: [],
     };
     section.products.push(product);
@@ -153,7 +146,7 @@ function buildRackSections(items: RackHoverProduct[], searchTerm: string, positi
   });
 
   return Array.from(sections.values())
-    .sort((a, b) => a.shelfLevel - b.shelfLevel || a.palletNumber - b.palletNumber)
+    .sort((a, b) => a.shelfLevel - b.shelfLevel)
     .map((section) => ({
       ...section,
       products: section.products.sort((a, b) => a.itemName.localeCompare(b.itemName, 'th')),
@@ -323,10 +316,11 @@ export default function WarehousePreviewPage() {
       }
 
       setRackSyncStatus('connecting');
-      setRackPreview({ key, loading: true, count: 0, items: [], binCapacity: 8 });
+      setRackPreview({ key, loading: true, count: 0, items: [], binCapacity: 4 });
       const racks = await fetchWarehouseRacks(hoveredZoneId);
       const rack = racks.find((candidate) => candidate.rackNumber === hoveredSlotNumber);
       const bins = rack ? await fetchWarehouseBins(rack.id) : [];
+      const shelfCapacity = rack ? getRackBins(bins, rack.id).length : 0;
 
       let query = supabase
         .from('deposit_items')
@@ -351,7 +345,7 @@ export default function WarehousePreviewPage() {
           count: 0,
           items: [],
           rackId: rack?.id,
-          binCapacity: bins.length || 8,
+          binCapacity: shelfCapacity || 4,
           error: 'โหลดสินค้าใน Rack ไม่สำเร็จ',
         });
         return;
@@ -364,10 +358,10 @@ export default function WarehousePreviewPage() {
         count,
         items,
         rackId: rack?.id,
-        binCapacity: bins.length || 8,
+        binCapacity: shelfCapacity || 4,
       };
       rackPreviewCache.current.set(key, cachedPreview);
-      setRackPreview({ key, loading: false, count, items, rackId: rack?.id, binCapacity: bins.length || 8 });
+      setRackPreview({ key, loading: false, count, items, rackId: rack?.id, binCapacity: shelfCapacity || 4 });
       setRackSyncStatus('live');
       setLastRackSync(new Date());
     };
@@ -381,7 +375,7 @@ export default function WarehousePreviewPage() {
         loading: false,
         count: 0,
         items: [],
-        binCapacity: 8,
+        binCapacity: 4,
         error: 'โหลดสินค้าใน Rack ไม่สำเร็จ',
       });
     });
@@ -447,22 +441,21 @@ export default function WarehousePreviewPage() {
     ? rackPreview
     : null;
   const rackPositionOptions = useMemo(() => {
-    const positions = new Map<string, { key: string; shelfLevel: number; palletNumber: number }>();
+    const positions = new Map<string, { key: string; shelfLevel: number }>();
     (activeRackPreview?.items ?? []).forEach((item) => {
       const shelfLevel = extractShelfLevel(item.storage_location);
-      const palletNumber = extractPalletNumber(item.storage_location);
-      const key = `L${shelfLevel}-P${palletNumber}`;
-      positions.set(key, { key, shelfLevel, palletNumber });
+      const key = `L${shelfLevel}`;
+      positions.set(key, { key, shelfLevel });
     });
     return Array.from(positions.values())
-      .sort((a, b) => a.shelfLevel - b.shelfLevel || a.palletNumber - b.palletNumber);
+      .sort((a, b) => a.shelfLevel - b.shelfLevel);
   }, [activeRackPreview?.items]);
   const rackSections = useMemo(
     () => buildRackSections(activeRackPreview?.items ?? [], rackSearchTerm, rackPositionFilter),
     [activeRackPreview?.items, rackPositionFilter, rackSearchTerm],
   );
   const occupiedPositionCount = rackPositionOptions.length;
-  const rackBinCapacity = Math.max(activeRackPreview?.binCapacity ?? 8, 1);
+  const rackBinCapacity = Math.max(activeRackPreview?.binCapacity ?? 4, 1);
   const rackUtilization = Math.min(Math.round((occupiedPositionCount / rackBinCapacity) * 100), 100);
   const rackUtilizationTone = rackUtilization >= 90 ? 'danger' : rackUtilization >= 70 ? 'warning' : 'success';
   const previewHighlightedIds = hoveredRack ? [hoveredRack.zoneId] : highlightedIds;
@@ -688,13 +681,13 @@ export default function WarehousePreviewPage() {
                   : `${activeRackPreview?.count ?? 0} รายการ · ${hoveredZone.name} · ${hoveredZone.floor}${lockedRack ? ' · เลือกแล้ว' : ' · คลิกเพื่อล็อก'}`
                 : isSearching
                   ? `พบ ${results.length} รายการที่ยังมีสินค้าคงเหลือ`
-                  : 'ระบบจะแสดงเฉพาสินค้าที่ยังอยู่ในคลัง'}
+                  : 'ระบบจะแสดงเฉพาะสินค้าที่ยังอยู่ในคลัง'}
             </p>
             {hoveredRack && hoveredZone && !activeRackPreview?.loading && (
               <>
                 <div className="wp-rack-capacity">
                   <div className="wp-rack-capacity-row">
-                    <span>ใช้พื้นที่ {occupiedPositionCount}/{rackBinCapacity} ชั้น–พาเลต</span>
+                    <span>ใช้พื้นที่ {occupiedPositionCount}/{rackBinCapacity} ช่องจัดเก็บ</span>
                     <span>{rackUtilization}%</span>
                   </div>
                   <div className="wp-rack-capacity-track">
@@ -741,7 +734,7 @@ export default function WarehousePreviewPage() {
                       className={`wp-rack-position-filter${rackPositionFilter === position.key ? ' active' : ''}`}
                       onClick={() => setRackPositionFilter(position.key)}
                     >
-                      ชั้น {position.shelfLevel} · P{position.palletNumber}
+                      ชั้น {position.shelfLevel}
                     </button>
                   ))}
                 </div>
@@ -775,12 +768,12 @@ export default function WarehousePreviewPage() {
               ) : activeRackPreview.items.length === 0 ? (
                 <div className="wp-empty"><div><div className="wp-empty-icon"><Icon><path d="M3 7h18v13H3zM7 7V4h10v3"/><path d="M9 12h6"/></Icon></div><strong>ยังไม่มีสินค้าใน Rack นี้</strong><span>ช่องนี้พร้อมสำหรับจัดเก็บสินค้า</span></div></div>
               ) : rackSections.length === 0 ? (
-                <div className="wp-empty"><div><div className="wp-empty-icon"><Icon size={22}><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></Icon></div><strong>ไม่พบสินค้าในตัวกรองนี้</strong><span>ลองเปลี่ยนคำค้นหา ชั้น หรือพาเลต</span></div></div>
+                <div className="wp-empty"><div><div className="wp-empty-icon"><Icon size={22}><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></Icon></div><strong>ไม่พบสินค้าในตัวกรองนี้</strong><span>ลองเปลี่ยนคำค้นหาหรือชั้น</span></div></div>
               ) : (
                 rackSections.map((section) => (
                   <details className="wp-rack-section" key={section.key} open>
                     <summary>
-                      <span>ชั้น {section.shelfLevel || '—'} · พาเลต {section.palletNumber || '—'}</span>
+                      <span>ชั้น {section.shelfLevel || '—'}</span>
                       <span className="wp-rack-section-count">{section.products.length} SKU</span>
                     </summary>
                     <div className="wp-rack-section-body">
@@ -831,7 +824,7 @@ export default function WarehousePreviewPage() {
                     <span className="wp-result-qty">{item.remaining_quantity} {item.unit || ''}</span>
                   </span>
                   <span className="wp-result-code">{item.item_code ? `รหัส ${item.item_code}` : 'ไม่มีรหัสสินค้า'}{item.deposits?.tracking_id ? ` · ${item.deposits.tracking_id}` : ''}</span>
-                  <span className="wp-result-location"><Icon size={14}><path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0z"/><circle cx="12" cy="10" r="2.5"/></Icon>{item.storage_location || 'ยังไม่ระบุตำแหน่ง'}</span>
+                  <span className="wp-result-location"><Icon size={14}><path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0z"/><circle cx="12" cy="10" r="2.5"/></Icon>{displayStorageLocation(item.storage_location) || 'ยังไม่ระบุตำแหน่ง'}</span>
                 </button>
               ))
             )}
@@ -850,7 +843,7 @@ export default function WarehousePreviewPage() {
                 </h2>
                 <p className="wp-location-detail">
                   {selectedItem
-                    ? <>จัดเก็บที่ <strong>{selectedItem.storage_location || 'ยังไม่ระบุตำแหน่ง'}</strong></>
+                    ? <>จัดเก็บที่ <strong>{displayStorageLocation(selectedItem.storage_location) || 'ยังไม่ระบุตำแหน่ง'}</strong></>
                     : 'ค้นหาสินค้าเพื่อเน้นตำแหน่งบนผัง'}
                 </p>
               </div>
@@ -867,7 +860,7 @@ export default function WarehousePreviewPage() {
 
           {selectedItem && !locationMapped && (
             <div className="wp-map-warning">
-              <span>⚠️ พบพิกัดสินค้าแล้ว แต่ยังไม่มีโซนในผังที่ตรงกับ “{selectedItem.storage_location || 'ไม่ระบุ'}”</span>
+              <span>⚠️ พบพิกัดสินค้าแล้ว แต่ยังไม่มีโซนในผังที่ตรงกับ “{displayStorageLocation(selectedItem.storage_location) || 'ไม่ระบุ'}”</span>
               <Link href="/main/warehouse-map">ไปผูกรหัสตำแหน่ง →</Link>
             </div>
           )}
@@ -973,7 +966,7 @@ export default function WarehousePreviewPage() {
             </div>
 
             <div style={{ color: 'var(--sp-navy)', fontSize: 12, fontWeight: 900 }}>
-              ชั้น {viewingRackProduct.shelfLevel || '—'} · พาเลต {viewingRackProduct.palletNumber || '—'}
+              ชั้น {viewingRackProduct.shelfLevel || '—'}
             </div>
             {viewingRackProduct.lots.map((lot) => (
               <div className="wp-product-lot" key={lot.id}>
@@ -985,7 +978,7 @@ export default function WarehousePreviewPage() {
                   ผู้ฝาก: {lot.deposits?.customer_name || 'ไม่ระบุ'}<br />
                   วันที่รับเข้า: {lot.deposits?.deposit_date ? new Date(lot.deposits.deposit_date).toLocaleDateString('th-TH') : 'ไม่ระบุ'}<br />
                   พนักงาน: {lot.deposits?.staff_received_name || 'ไม่ระบุ'}
-                  {lot.detail ? <><br />รายละเอียด: {lot.detail}</> : null}
+                  {displayItemDetail(lot.detail) ? <><br />รายละเอียด: {displayItemDetail(lot.detail)}</> : null}
                 </div>
               </div>
             ))}

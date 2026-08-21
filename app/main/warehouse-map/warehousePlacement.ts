@@ -13,9 +13,14 @@ export function getZoneRacks(racks: WarehouseRack[], zoneId: string) {
 }
 
 export function getRackBins(bins: WarehouseBin[], rackId: string) {
-  return bins
+  const firstBinByShelf = new Map<number, WarehouseBin>();
+  bins
     .filter((bin) => bin.rackId === rackId)
-    .sort((a, b) => a.shelfLevel - b.shelfLevel || a.palletNumber - b.palletNumber);
+    .sort((a, b) => a.shelfLevel - b.shelfLevel || a.palletNumber - b.palletNumber)
+    .forEach((bin) => {
+      if (!firstBinByShelf.has(bin.shelfLevel)) firstBinByShelf.set(bin.shelfLevel, bin);
+    });
+  return Array.from(firstBinByShelf.values());
 }
 
 export function formatWarehousePlacement(
@@ -25,5 +30,5 @@ export function formatWarehousePlacement(
 ) {
   if (!zone) return '';
   if (!rack || !bin) return [zone.locationCode, zone.floor].filter(Boolean).join(' / ');
-  return `ช่อง ${zone.locationCode} / ชั้น ${bin.shelfLevel} / Rack ${rack.rackNumber} / พาเลต ${bin.palletNumber}`;
+  return `ช่อง ${zone.locationCode} / ชั้น ${bin.shelfLevel} / Rack ${rack.rackNumber}`;
 }

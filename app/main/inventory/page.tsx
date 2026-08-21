@@ -1,7 +1,9 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
+import { fetchAllSupabaseRows } from '../../../lib/supabasePagination';
+import { displayItemDetail, displayStorageLocation } from '../../../lib/warehouseLocation';
 import type { DepositItem, Withdrawal } from '../../../types/warehouse';
 import { Toast, useToast } from '../components/Toast';
 import type { WarehouseBin, WarehouseRack, WarehouseZone } from '../warehouse-map/types';
@@ -38,6 +40,7 @@ export default function InventoryPage() {
   const [viewingItem, setViewingItem] = useState<DepositItem | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('ทั้งหมด');
+  const [demoFilter, setDemoFilter] = useState<'all' | 'real' | 'demo'>('all');
   const [loading, setLoading] = useState(true);
   const [imgZoom, setImgZoom] = useState(false);
   const [page, setPage] = useState(0);
@@ -95,9 +98,7 @@ export default function InventoryPage() {
     return () => window.cancelAnimationFrame(frame);
   }, []);
 
-  useEffect(() => { setPage(0); }, [debouncedSearch, statusFilter, pageSize, sortBy]);
-  useEffect(() => { fetchItems(); }, [page, debouncedSearch, statusFilter, pageSize, sortBy]);
-  useEffect(() => { fetchGlobalCounts(); }, []);
+  useEffect(() => { setPage(0); }, [debouncedSearch, statusFilter, demoFilter, pageSize, sortBy]);
   useEffect(() => {
     void Promise.all([fetchWarehouseZones(), fetchWarehouseRacks(), fetchWarehouseBins()])
       .then(([zones, racks, bins]) => {
@@ -111,10 +112,9 @@ export default function InventoryPage() {
         setWarehouseBins([]);
       });
   }, []);
-  useEffect(() => { if (viewMode === 'summary') fetchSummary(); }, [viewMode, debouncedSearch, statusFilter]);
-  useEffect(() => { setSummaryPage(0); }, [debouncedSearch, statusFilter, summaryPageSize, viewMode]);
+  useEffect(() => { setSummaryPage(0); }, [debouncedSearch, statusFilter, demoFilter, summaryPageSize, viewMode]);
 
-  const fetchItems = async () => {
+  const fetchItems = useCallback(async () => {
     setLoading(true);
     const from = page * pageSize;
     const to = from + pageSize - 1;
@@ -140,6 +140,8 @@ export default function InventoryPage() {
     } else if (statusFilter === 'คืนแล้ว') {
       query = query.or('status.eq.คืนแล้ว,remaining_quantity.lte.0');
     }
+    if (demoFilter === 'demo') query = query.or('item_code.ilike.MOCK-%,item_code.ilike.DEMO-%');
+    else if (demoFilter === 'real') query = query.or('and(item_code.not.ilike.MOCK-%,item_code.not.ilike.DEMO-%),item_code.is.null');
 
     const s = debouncedSearch.trim().replace(/[,()%]/g, '');
     if (s) {
@@ -164,11 +166,11 @@ export default function InventoryPage() {
     setItems((data as DepositItem[]) || []);
     setTotalCount(count ?? 0);
     setLoading(false);
-  };
+  }, [page, pageSize, statusFilter, demoFilter, debouncedSearch, sortBy]);
 
   // ── ดึงข้อมูลทั้งหมดที่ตรงตามฟิลเตอร์ แล้วจัดกลุ่มรวมยอดตามรหัสสินค้า (ถ้ามี) หรือชื่อสินค้า ──
   // สินค้าที่ "รหัสตรงกัน" จะถูกรวมเป็นกลุ่มเดียวกันก่อน ถ้าไม่มีรหัสจะรวมตาม "ชื่อตรงกัน" แทน
-  const fetchSummary = async () => {
+  const fetchSummary = useCallback(async () => {
     setSummaryLoading(true);
     let query = supabase
       .from('deposit_items')
@@ -191,6 +193,8 @@ export default function InventoryPage() {
     } else if (statusFilter === 'คืนแล้ว') {
       query = query.or('status.eq.คืนแล้ว,remaining_quantity.lte.0');
     }
+    if (demoFilter === 'demo') query = query.or('item_code.ilike.MOCK-%,item_code.ilike.DEMO-%');
+    else if (demoFilter === 'real') query = query.or('and(item_code.not.ilike.MOCK-%,item_code.not.ilike.DEMO-%),item_code.is.null');
 
     const s = debouncedSearch.trim().replace(/[,()%]/g, '');
     if (s) {
@@ -207,7 +211,18 @@ export default function InventoryPage() {
       }
     }
 
-    const { data } = await query;
+    let data: DepositItem[] = [];
+    try {
+      data = await fetchAllSupabaseRows<DepositItem>(async (from, to) => {
+        const { data: pageRows, error } = await query.range(from, to);
+        return { data: pageRows as unknown as DepositItem[], error };
+      });
+    } catch (error) {
+      console.error('[inventory summary] fetch failed:', error);
+      setSummaryItems([]);
+      setSummaryLoading(false);
+      return;
+    }
 
     const groups = new Map<string, {
       key: string; item_name: string; item_code: string; unit: string;
@@ -215,7 +230,7 @@ export default function InventoryPage() {
       locations: Set<string>; anyActive: boolean; items: DepositItem[];
     }>();
 
-    (data || []).forEach((item: any) => {
+    data.forEach((item: any) => {
       const codeKey = (item.item_code || '').trim().toLowerCase();
       const nameKey = (item.item_name || '').trim().toLowerCase();
       // จัดกลุ่มตามรหัสสินค้าก่อนถ้ามี ไม่งั้นใช้ชื่อสินค้าแทน
@@ -239,7 +254,7 @@ export default function InventoryPage() {
       g.totalRemaining += Number(item.remaining_quantity) || 0;
       g.totalQuantity += Number(item.quantity) || 0;
       g.trackingCount += 1;
-      if (item.storage_location) g.locations.add(item.storage_location);
+      if (item.storage_location) g.locations.add(displayStorageLocation(item.storage_location));
       if (!g.item_code && item.item_code) g.item_code = item.item_code;
       const isReturned = item.status === 'คืนแล้ว' || item.remaining_quantity <= 0;
       if (!isReturned) g.anyActive = true;
@@ -252,7 +267,7 @@ export default function InventoryPage() {
 
     setSummaryItems(grouped);
     setSummaryLoading(false);
-  };
+  }, [statusFilter, demoFilter, debouncedSearch]);
 
   const handlePrint = (item: DepositItem) => {
     const isReturned = item.status === 'คืนแล้ว' || item.remaining_quantity <= 0;
@@ -295,6 +310,10 @@ export default function InventoryPage() {
   };
 
   const openEdit = (item: DepositItem) => {
+    const currentBin = warehouseBins.find((bin) => bin.id === item.warehouse_bin_id);
+    const canonicalBin = currentBin
+      ? getRackBins(warehouseBins, currentBin.rackId).find((bin) => bin.shelfLevel === currentBin.shelfLevel)
+      : undefined;
     setEditItem(item);
     setEditForm({
       item_name: item.item_name || '',
@@ -305,7 +324,7 @@ export default function InventoryPage() {
       storage_location: item.storage_location || '',
       warehouse_zone_id: item.warehouse_zone_id || '',
       warehouse_rack_id: item.warehouse_rack_id || '',
-      warehouse_bin_id: item.warehouse_bin_id || '',
+      warehouse_bin_id: canonicalBin?.id || item.warehouse_bin_id || '',
       customer_name: (item.deposits as any)?.customer_name || '',
       customer_phone: (item.deposits as any)?.customer_phone || '',
     });
@@ -319,14 +338,21 @@ export default function InventoryPage() {
       const selectedRack = warehouseRacks.find(rack => rack.id === editForm.warehouse_rack_id);
       const selectedBin = warehouseBins.find(bin => bin.id === editForm.warehouse_bin_id);
       if (!selectedZone || !selectedRack || !selectedBin) {
-        throw new Error('กรุณาเลือกโซน, Rack และชั้น/พาเลตให้ครบ');
+        throw new Error('กรุณาเลือกโซน, Rack และชั้นให้ครบ');
       }
+      const alreadyReturned = Math.max(0, editItem.quantity - editItem.remaining_quantity);
+      if (editForm.quantity < alreadyReturned) {
+        throw new Error(`จำนวนทั้งหมดต้องไม่น้อยกว่าจำนวนที่คืนไปแล้ว ${alreadyReturned} ${editItem.unit}`);
+      }
+      const nextRemaining = editForm.quantity - alreadyReturned;
       const exactLocation = formatWarehousePlacement(selectedZone, selectedRack, selectedBin);
       const { error: itemErr } = await supabase.from('deposit_items').update({
         item_name: editForm.item_name,
         item_code: editForm.item_code || null,
         detail: editForm.detail,
         quantity: editForm.quantity,
+        remaining_quantity: nextRemaining,
+        status: nextRemaining <= 0 ? 'คืนแล้ว' : 'กำลังฝาก',
         unit: editForm.unit,
         warehouse_zone_id: editForm.warehouse_zone_id,
         warehouse_rack_id: editForm.warehouse_rack_id,
@@ -334,12 +360,6 @@ export default function InventoryPage() {
         storage_location: exactLocation,
       }).eq('id', editItem.id);
       if (itemErr) throw itemErr;
-
-      const { error: locationErr } = await supabase
-        .from('deposit_items')
-        .update({ storage_location: exactLocation })
-        .eq('id', editItem.id);
-      if (locationErr) throw locationErr;
 
       const depositId = (editItem.deposits as any)?.id ?? (editItem as any).deposit_id;
       if (depositId) {
@@ -361,11 +381,23 @@ export default function InventoryPage() {
 
   const handleExportCSV = async () => {
     setExportLoading(true);
-    const { data } = await supabase
-      .from('deposit_items')
-      .select('*, deposits(tracking_id, customer_name, customer_phone, deposit_date, staff_received_name)')
-      .order('id', { ascending: false });
-    if (!data) { setExportLoading(false); return; }
+    let data: DepositItem[];
+    try {
+      data = await fetchAllSupabaseRows<DepositItem>(async (from, to) => {
+        let query = supabase
+          .from('deposit_items')
+          .select('*, deposits(tracking_id, customer_name, customer_phone, deposit_date, staff_received_name)')
+          .order('id', { ascending: false });
+        if (demoFilter === 'demo') query = query.or('item_code.ilike.MOCK-%,item_code.ilike.DEMO-%');
+        else if (demoFilter === 'real') query = query.or('and(item_code.not.ilike.MOCK-%,item_code.not.ilike.DEMO-%),item_code.is.null');
+        const { data: pageRows, error } = await query.range(from, to);
+        return { data: pageRows as unknown as DepositItem[], error };
+      });
+    } catch (error) {
+      toast('Export ไม่สำเร็จ: ' + (error instanceof Error ? error.message : 'ไม่ทราบสาเหตุ'), 'error');
+      setExportLoading(false);
+      return;
+    }
 
     const rows = [
       ['Tracking ID', 'ชื่อผู้ฝาก', 'เบอร์โทร', 'วันที่รับฝาก', 'พนักงานผู้รับฝาก', 'ชื่อสิ่งของ', 'รหัสสินค้า', 'รายละเอียด', 'จำนวนทั้งหมด', 'คงเหลือ', 'หน่วย', 'ตำแหน่งเก็บ', 'สถานะ'],
@@ -381,7 +413,7 @@ export default function InventoryPage() {
         item.quantity,
         item.remaining_quantity,
         item.unit || '',
-        item.storage_location || '',
+        displayStorageLocation(item.storage_location),
         item.status || (item.remaining_quantity <= 0 ? 'คืนแล้ว' : 'กำลังฝาก'),
       ]),
     ];
@@ -400,16 +432,30 @@ export default function InventoryPage() {
 
   const filtered = items;
 
-  const fetchGlobalCounts = async () => {
-    const [{ count: active }, { count: returned }] = await Promise.all([
-      supabase.from('deposit_items').select('*', { count: 'exact', head: true })
-        .neq('status', 'คืนแล้ว').gt('remaining_quantity', 0),
-      supabase.from('deposit_items').select('*', { count: 'exact', head: true })
-        .or('status.eq.คืนแล้ว,remaining_quantity.lte.0'),
-    ]);
+  const fetchGlobalCounts = useCallback(async () => {
+    let activeQuery = supabase.from('deposit_items').select('*', { count: 'exact', head: true })
+      .neq('status', 'คืนแล้ว').gt('remaining_quantity', 0);
+    let returnedQuery = supabase.from('deposit_items').select('*', { count: 'exact', head: true })
+      .or('status.eq.คืนแล้ว,remaining_quantity.lte.0');
+    if (demoFilter !== 'all') {
+      if (demoFilter === 'demo') {
+        activeQuery = activeQuery.or('item_code.ilike.MOCK-%,item_code.ilike.DEMO-%');
+        returnedQuery = returnedQuery.or('item_code.ilike.MOCK-%,item_code.ilike.DEMO-%');
+      } else {
+        activeQuery = activeQuery.or('and(item_code.not.ilike.MOCK-%,item_code.not.ilike.DEMO-%),item_code.is.null');
+        returnedQuery = returnedQuery.or('and(item_code.not.ilike.MOCK-%,item_code.not.ilike.DEMO-%),item_code.is.null');
+      }
+    }
+    const [{ count: active }, { count: returned }] = await Promise.all([activeQuery, returnedQuery]);
     setActiveCount(active ?? 0);
     setReturnedCount(returned ?? 0);
-  };
+  }, [demoFilter]);
+
+  useEffect(() => { void fetchItems(); }, [fetchItems]);
+  useEffect(() => { void fetchGlobalCounts(); }, [fetchGlobalCounts]);
+  useEffect(() => {
+    if (viewMode === 'summary') void fetchSummary();
+  }, [viewMode, fetchSummary]);
   
   // คำนวณจำนวนหน้าทั้งหมดแปรผันตาม pageSize ล่าสุด
   const totalPages = Math.ceil(totalCount / pageSize) || 1;
@@ -475,6 +521,18 @@ export default function InventoryPage() {
             </button>
           ))}
         </div>
+
+        <select
+          aria-label="กรองข้อมูลจริงหรือข้อมูลตัวอย่าง"
+          value={demoFilter}
+          onChange={(event) => setDemoFilter(event.target.value as 'all' | 'real' | 'demo')}
+          className="wh-select"
+          style={{ width: 'auto', fontSize: 13, padding: '7px 10px' }}
+        >
+          <option value="all">ข้อมูลจริง + ตัวอย่าง</option>
+          <option value="real">เฉพาะข้อมูลจริง</option>
+          <option value="demo">เฉพาะข้อมูลตัวอย่าง</option>
+        </select>
 
         {/* สลับมุมมอง: แยกตามแท็กกิ้ง / สรุปยอดรวมตามสินค้า */}
         <div className="wh-flex-row" style={{ gap: 4, background: '#eef2f7', padding: 3, borderRadius: 9 }}>
@@ -686,7 +744,7 @@ export default function InventoryPage() {
                         {item.item_name}
                         {item.item_code && <span className="wh-mono" style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--sp-text3)', background: 'var(--sp-bg2)', padding: '1px 6px', borderRadius: 5 }}>{item.item_code}</span>}
                       </div>
-                      {item.detail && <div style={{ fontSize: 12, color: 'var(--sp-text3)', marginTop: 2 }}>{item.detail}</div>}
+                      {displayItemDetail(item.detail) && <div style={{ fontSize: 12, color: 'var(--sp-text3)', marginTop: 2 }}>{displayItemDetail(item.detail)}</div>}
                       <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 7 }}>
                         <div style={{ flex: 1, background: 'var(--sp-bg2)', borderRadius: 99, height: 5, overflow: 'hidden' }}>
                           <div style={{ width: `${pct}%`, height: '100%', background: isReturned ? 'var(--sp-text3)' : 'linear-gradient(90deg,var(--sp-blue),var(--sp-blue-lt))', borderRadius: 99 }} />
@@ -696,7 +754,7 @@ export default function InventoryPage() {
                         </span>
                       </div>
                     </td>
-                    <td style={{ color: 'var(--sp-text2)', fontSize: 13 }}>{item.storage_location || '—'}</td>
+                    <td style={{ color: 'var(--sp-text2)', fontSize: 13 }}>{displayStorageLocation(item.storage_location) || '—'}</td>
                     <td style={{ textAlign: 'center' }}>
                       {isReturned
                         ? <span className="wh-badge wh-badge-returned">คืนแล้ว</span>
@@ -786,7 +844,7 @@ export default function InventoryPage() {
                       <div style={{ fontSize: 12.5, marginTop: 4, color: 'var(--sp-text2)' }}>{(item.deposits as any)?.customer_name || '—'}</div>
                       <div style={{ fontSize: 12, marginTop: 2, fontWeight: 700, color: isReturned ? 'var(--sp-text3)' : 'var(--sp-blue)' }}>
                         {item.remaining_quantity}/{item.quantity} {item.unit}
-                        {item.storage_location && <span style={{ fontWeight: 400, color: 'var(--sp-text3)' }}> · 📍 {item.storage_location}</span>}
+                        {item.storage_location && <span style={{ fontWeight: 400, color: 'var(--sp-text3)' }}> · 📍 {displayStorageLocation(item.storage_location)}</span>}
                       </div>
                     </div>
                     <div className="wh-flex-row" style={{ gap: 5, flexWrap: 'wrap' }}>
@@ -1038,7 +1096,7 @@ export default function InventoryPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="wh-label">ชั้น / พาเลต</label>
+                    <label className="wh-label">ชั้น</label>
                     <select
                       className="wh-select"
                       value={editForm.warehouse_bin_id}
@@ -1048,7 +1106,7 @@ export default function InventoryPage() {
                     >
                       <option value="">— เลือกตำแหน่ง —</option>
                       {getRackBins(warehouseBins, editForm.warehouse_rack_id).map(bin => (
-                        <option key={bin.id} value={bin.id}>ชั้น {bin.shelfLevel} · พาเลต {bin.palletNumber}</option>
+                        <option key={bin.id} value={bin.id}>ชั้น {bin.shelfLevel}</option>
                       ))}
                     </select>
                   </div>
@@ -1061,7 +1119,7 @@ export default function InventoryPage() {
                         warehouseRacks.find(rack => rack.id === editForm.warehouse_rack_id),
                         warehouseBins.find(bin => bin.id === editForm.warehouse_bin_id),
                       )}
-                      placeholder="เลือกโซน, Rack และชั้น/พาเลตให้ครบ"
+                      placeholder="เลือกโซน, Rack และชั้นให้ครบ"
                       readOnly
                     />
                   </div>
@@ -1123,7 +1181,7 @@ export default function InventoryPage() {
                 { label: 'รหัสสินค้า', value: viewingItem.item_code || '—' },
                 { label: 'ลักษณะเพิ่มเติม', value: viewingItem.detail || '—' },
                 { label: 'จำนวนคงเหลือ', value: `${viewingItem.remaining_quantity} / ${viewingItem.quantity} ${viewingItem.unit}` },
-                { label: 'พิกัดจัดเก็บ', value: viewingItem.storage_location || '—' },
+                { label: 'พิกัดจัดเก็บ', value: displayStorageLocation(viewingItem.storage_location) || '—' },
               ].map(row => (
                 <div key={row.label} className="wh-info-row">
                   <span className="wh-info-label">{row.label}</span>

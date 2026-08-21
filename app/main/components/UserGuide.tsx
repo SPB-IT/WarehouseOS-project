@@ -19,6 +19,26 @@ type GuideSection = {
 
 const guides: GuideSection[] = [
   {
+    id: 'finder',
+    label: '🗺️ ค้นหาในผัง',
+    color: '#1a4f8a',
+    bg: '#eef4fb',
+    border: '#b3d0f0',
+    steps: [
+      {
+        icon: <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>,
+        title: 'ค้นหาสินค้าแล้วดูตำแหน่งบนผัง',
+        desc: 'ค้นหาด้วยชื่อสินค้า รหัสสินค้า ผู้ฝาก หรือ Tracking ID จากหน้าแรก เมื่อเลือกรายการ ตำแหน่งที่เก็บจะเด่นขึ้นและพื้นที่อื่นจะเป็นสีเทา',
+      },
+      {
+        icon: <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M3 6.5 8 4l8 3 5-2.5v13L16 20l-8-3-5 2.5z"/><path d="M8 4v13M16 7v13"/></svg>,
+        title: 'ชี้หรือคลิก Rack',
+        desc: 'ชี้ช่อง Rack เพื่อดูรายการย่อ คลิกเพื่อตรึงรายการไว้ในแผงผลลัพธ์ด้านซ้าย แล้วเลื่อนดูสินค้าใน Rack นั้นได้',
+        tip: 'ตำแหน่งอ่านตามลำดับ โซน → Rack → ชั้น',
+      },
+    ],
+  },
+  {
     id: 'dashboard',
     label: '📊 ภาพรวม',
     color: '#1a4f8a',
@@ -28,7 +48,7 @@ const guides: GuideSection[] = [
       {
         icon: <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>,
         title: 'ดูสถิติภาพรวมระบบ',
-        desc: 'หน้าแรกแสดงตัวเลขสรุป: จำนวนใบรับฝาก, สินค้าคงเหลือในคลัง, รายการกำลังฝาก และรายการที่คืนแล้ว — มองแวบเดียวรู้สถานะทั้งหมด',
+        desc: 'หน้า “ภาพรวม” แสดงจำนวนใบรับฝาก สินค้าคงเหลือ รายการกำลังฝาก และรายการที่คืนแล้ว พร้อมระบุจำนวนข้อมูลตัวอย่างที่รวมอยู่',
         tip: 'ข้อมูลอัปเดตแบบ real-time ทุกครั้งที่โหลดหน้า',
       },
       {
@@ -91,7 +111,7 @@ const guides: GuideSection[] = [
       {
         icon: <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>,
         title: 'กรองตามสถานะ',
-        desc: 'ใช้ปุ่มกรอง "ทั้งหมด / กำลังฝาก / คืนแล้ว" เพื่อดูเฉพาะสินค้าที่ต้องการ',
+        desc: 'ใช้ปุ่มกรองสถานะ และตัวเลือก “ข้อมูลจริง / ข้อมูลตัวอย่าง” เพื่อแยกข้อมูลสำหรับใช้งานจริงออกจากชุดสาธิต',
       },
       {
         icon: <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>,

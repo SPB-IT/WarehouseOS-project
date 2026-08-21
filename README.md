@@ -1,36 +1,42 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# WarehouseOS — สำเพ็งบุรีรัมย์
 
-## Getting Started
+ระบบค้นหาตำแหน่งสินค้า รับฝาก คืนสินค้า ดูประวัติ และจัดผังคลังแบบเชื่อมกับ Supabase
 
-First, run the development server:
+## เริ่มใช้งาน
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+เปิด <http://localhost:3000> คำเตือน workspace root จากหลาย `package-lock.json` ถูกแก้ด้วย `turbopack.root` ใน `next.config.ts` แล้ว
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Environment variables
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+คัดลอกค่าจาก `.env.example` ไป `.env.local` แล้วใส่ Supabase URL และ anon key ของโปรเจกต์ ห้าม commit `.env.local`
 
-## Learn More
+## ฐานข้อมูลและระบบล็อกอิน
 
-To learn more about Next.js, take a look at the following resources:
+Migration ล่าสุดคือ `supabase/migrations/20260821_security_transactions_and_demo_data.sql` ซึ่งเพิ่ม:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- Email/Password authentication และสิทธิ์ `admin` / `staff`
+- Row Level Security สำหรับข้อมูลคลังและผัง
+- transaction สำหรับรับฝากและคืนสินค้าหลายรายการ
+- ตัวระบุข้อมูลตัวอย่างและ archived zones
+- validation จำนวนสินค้าและการซิงก์พิกัด `โซน → Rack → ชั้น`
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+ก่อนรัน migration ต้องสร้างผู้ใช้ใน Supabase Auth อย่างน้อยหนึ่งคน แล้วทำตาม `SECURITY_SETUP.md`
 
-## Deploy on Vercel
+## ตรวจคุณภาพก่อนอัป Git
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+npm run check
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+คำสั่งนี้รัน lint, TypeScript, automated tests และ production build ตามลำดับ
+
+ตรวจความสัมพันธ์พิกัดกับ Supabase แบบอ่านอย่างเดียว:
+
+```bash
+node --env-file=.env.local scripts/audit-placement-sync.mjs
+```

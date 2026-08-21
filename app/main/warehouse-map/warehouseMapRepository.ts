@@ -13,6 +13,7 @@ interface WarehouseZoneRow {
   color: string;
   rack_levels?: number | null;
   pallets_per_level?: number | null;
+  is_archived?: boolean | null;
 }
 
 interface WarehouseRackRow {
@@ -75,11 +76,11 @@ function getRackPrefix(zone: WarehouseZone, existingRacks: WarehouseRack[]) {
 
 export type WarehouseZoneDraft = Omit<WarehouseZone, 'id'>;
 
-const ZONE_COLUMNS = 'id, name, location_code, floor, pos_x, pos_y, width, height, color, rack_levels, pallets_per_level';
+const ZONE_COLUMNS = 'id, name, location_code, floor, pos_x, pos_y, width, height, color, rack_levels, pallets_per_level, is_archived';
 const LEGACY_ZONE_COLUMNS = 'id, name, location_code, floor, pos_x, pos_y, width, height, color';
 
 function isMissingZoneConfig(error: { message?: string } | null) {
-  return Boolean(error?.message && /rack_levels|pallets_per_level/i.test(error.message));
+  return Boolean(error?.message && /rack_levels|pallets_per_level|is_archived/i.test(error.message));
 }
 
 function fromRow(row: WarehouseZoneRow): WarehouseZone {
@@ -94,7 +95,8 @@ function fromRow(row: WarehouseZoneRow): WarehouseZone {
     height: row.height,
     color: row.color,
     rackLevels: row.rack_levels ?? 4,
-    palletsPerLevel: row.pallets_per_level ?? 2,
+    palletsPerLevel: 1,
+    isArchived: row.is_archived ?? false,
   };
 }
 
@@ -110,7 +112,8 @@ function toRow(zone: WarehouseZone | WarehouseZoneDraft) {
     height: zone.height,
     color: zone.color,
     rack_levels: zone.rackLevels ?? 4,
-    pallets_per_level: zone.palletsPerLevel ?? 2,
+    pallets_per_level: 1,
+    is_archived: zone.isArchived ?? false,
   };
 }
 
@@ -118,6 +121,7 @@ function toLegacyRow(zone: WarehouseZone | WarehouseZoneDraft) {
   const row: Partial<ReturnType<typeof toRow>> = { ...toRow(zone) };
   delete row.rack_levels;
   delete row.pallets_per_level;
+  delete row.is_archived;
   return row;
 }
 
@@ -142,7 +146,7 @@ export async function fetchWarehouseZones() {
     rows = (response.data ?? []) as unknown as WarehouseZoneRow[];
   }
 
-  const zones = rows.map(fromRow);
+  const zones = rows.map(fromRow).filter((zone) => !zone.isArchived);
   const referenceCodes = new Set(['S', 'R', 'L', 'N', 'A', 'B', 'C', 'D', 'E', 'F']);
   const hasReferenceLayout = ['S', 'R', 'L', 'A', 'B', 'C', 'D', 'E', 'F']
     .every((code) => zones.some((zone) => zone.locationCode === code));
@@ -178,7 +182,7 @@ export async function updateWarehouseZone(
   id: string,
   patch: Partial<WarehouseZoneDraft>,
 ) {
-  const rowPatch: Record<string, string | number> = {};
+  const rowPatch: Record<string, string | number | boolean> = {};
   if (patch.name !== undefined) rowPatch.name = patch.name;
   if (patch.locationCode !== undefined) rowPatch.location_code = patch.locationCode;
   if (patch.floor !== undefined) rowPatch.floor = patch.floor;
@@ -189,12 +193,14 @@ export async function updateWarehouseZone(
   if (patch.color !== undefined) rowPatch.color = patch.color;
   if (patch.rackLevels !== undefined) rowPatch.rack_levels = patch.rackLevels;
   if (patch.palletsPerLevel !== undefined) rowPatch.pallets_per_level = patch.palletsPerLevel;
+  if (patch.isArchived !== undefined) rowPatch.is_archived = patch.isArchived;
 
   let response = await supabase.from('warehouse_zones').update(rowPatch).eq('id', id);
   if (isMissingZoneConfig(response.error)) {
     const legacyPatch = { ...rowPatch };
     delete legacyPatch.rack_levels;
     delete legacyPatch.pallets_per_level;
+    delete legacyPatch.is_archived;
     response = await supabase.from('warehouse_zones').update(legacyPatch).eq('id', id);
   }
   if (response.error) throw response.error;
@@ -298,15 +304,14 @@ export async function addWarehouseRack(zone: WarehouseZone) {
 
   const rack = fromRackRow(data as WarehouseRackRow);
   const rackLevels = Math.min(Math.max(Math.round(zone.rackLevels ?? 4), 1), 20);
-  const palletsPerLevel = Math.min(Math.max(Math.round(zone.palletsPerLevel ?? 2), 1), 10);
   const bins = Array.from({ length: rackLevels }, (_, levelIndex) => levelIndex + 1)
-    .flatMap((level) => Array.from({ length: palletsPerLevel }, (_, palletIndex) => palletIndex + 1).map((pallet) => ({
+    .map((level) => ({
       rack_id: rack.id,
-      code: `${rack.code}-L${level}-P${pallet}`,
+      code: `${rack.code}-L${level}-P1`,
       shelf_level: level,
       row_no: 1,
-      col_no: pallet,
-    })));
+      col_no: 1,
+    }));
   const { error: binError } = await supabase.from('warehouse_bins').insert(bins);
   if (binError) {
     await supabase.from('warehouse_racks').delete().eq('id', rack.id);

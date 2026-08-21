@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState, use } from 'react';
 import { supabase } from '../../../lib/supabase';
+import { displayItemDetail, displayStorageLocation } from '../../../lib/warehouseLocation';
 
 export default function PrintForm({ params }: { params: Promise<{ id: string }> }) {
   const [depositItems, setDepositItems] = useState<any[]>([]);
@@ -147,9 +148,9 @@ export default function PrintForm({ params }: { params: Promise<{ id: string }> 
               <td style={{ fontFamily: 'monospace', color: '#444' }}>{`PCL-${String(item.id).padStart(5, '0')}`}</td>
               <td>
                 <div style={{ fontWeight: 700 }}>{item.item_name}</div>
-                {item.detail && <div style={{ fontSize: '12px', color: '#777' }}>{item.detail}</div>}
+                {displayItemDetail(item.detail) && <div style={{ fontSize: '12px', color: '#777' }}>{displayItemDetail(item.detail)}</div>}
               </td>
-              <td>{item.storage_location || '—'}</td>
+              <td>{displayStorageLocation(item.storage_location) || '—'}</td>
               <td style={{ textAlign: 'center', fontWeight: 700 }}>{item.quantity}</td>
               <td style={{ textAlign: 'center' }}>{item.unit}</td>
             </tr>

@@ -1,8 +1,9 @@
 'use client';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { Fragment, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { Fragment, useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
+import { supabase } from '../../../lib/supabase';
 
 const UserGuide = dynamic(() => import('./UserGuide'), { ssr: false });
 
@@ -85,8 +86,31 @@ const navItems = [
 
 export default function Navbar() {
   const pathname = usePathname();
+  const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
+  const [account, setAccount] = useState<{ email: string; role: string } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void supabase.auth.getSession().then(async ({ data }) => {
+      const user = data.session?.user;
+      if (!user || !active) return;
+      const { data: roleRow } = await supabase
+        .from('warehouse_user_roles')
+        .select('role')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      if (active) setAccount({ email: user.email ?? 'พนักงาน', role: roleRow?.role ?? 'staff' });
+    });
+    return () => { active = false; };
+  }, []);
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    router.replace('/login');
+    router.refresh();
+  };
 
   return (
     <>
@@ -163,6 +187,10 @@ export default function Navbar() {
           border-color: rgba(200,151,42,0.55);
           color: #f0cc6a;
         }
+        .sp-account { display:flex; align-items:center; gap:7px; margin-left:5px; }
+        .sp-account-text { max-width:105px; overflow:hidden; text-overflow:ellipsis; color:rgba(255,255,255,.72); font-size:10.5px; line-height:1.2; }
+        .sp-signout { border:1px solid rgba(255,255,255,.22); background:rgba(255,255,255,.08); color:#fff; border-radius:7px; padding:6px 8px; cursor:pointer; font:700 11px inherit; }
+        .sp-signout:hover { background:rgba(255,255,255,.16); }
 
         .sp-hamburger {
           display: none; background: none; border: none;
@@ -243,6 +271,12 @@ export default function Navbar() {
               </svg>
               คู่มือการใช้งาน
             </button>
+            {account && (
+              <div className="sp-account" title={`${account.email} · ${account.role}`}>
+                <span className="sp-account-text">{account.email}<br />{account.role === 'admin' ? 'ผู้ดูแลระบบ' : 'พนักงาน'}</span>
+                <button type="button" className="sp-signout" onClick={signOut}>ออก</button>
+              </div>
+            )}
           </div>
 
           <button className="sp-hamburger" onClick={() => setMenuOpen(o => !o)} aria-label="เมนู">
@@ -273,6 +307,11 @@ export default function Navbar() {
             </svg>
             คู่มือการใช้งาน
           </button>
+          {account && (
+            <button className="sp-mobile-guide-btn" type="button" onClick={signOut}>
+              ออกจากระบบ · {account.email}
+            </button>
+          )}
         </div>
       </nav>
     </>

@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState, use } from 'react';
 import { supabase } from '../../../lib/supabase';
+import { displayItemDetail } from '../../../lib/warehouseLocation';
 
 export default function PrintForm({ params }: { params: Promise<{ id: string }> }) {
   const [data, setData] = useState<any[] | null>(null);
@@ -55,7 +56,6 @@ export default function PrintForm({ params }: { params: Promise<{ id: string }> 
   );
 
   const firstRecord = data[0];
-  const allTrackingIds = Array.from(new Set(data.map(item => item.deposit_items?.deposits?.tracking_id).filter(Boolean))).join(', ');
   const allCustomerNames = Array.from(new Set(data.map(item => item.deposit_items?.deposits?.customer_name).filter(Boolean))).join(', ');
   const allCustomerPhones = Array.from(new Set(data.map(item => item.deposit_items?.deposits?.customer_phone).filter(Boolean))).join(', ');
   const rawDate = firstRecord.withdraw_date || firstRecord.created_at;
@@ -154,7 +154,7 @@ export default function PrintForm({ params }: { params: Promise<{ id: string }> 
                 <div style={{ fontWeight: 700 }}>{item.deposit_items?.item_name}</div>
                 {item.deposit_items?.detail && (
                   <div style={{ fontSize: '12px', color: '#777' }}>
-                    {item.deposit_items.detail}
+                    {displayItemDetail(item.deposit_items.detail)}
                   </div>
                 )}
               </td>

@@ -1,6 +1,7 @@
 // app/layout.tsx
 import './globals.css';
 import type { Metadata } from 'next';
+import AuthGate from './main/components/AuthGate';
 
 export const metadata: Metadata = {
   title: 'WarehouseOS — ระบบจัดการคลังสินค้า',
@@ -20,7 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       {/* ตรงนี้ไม่มี Navbar เพราะจะให้หน้าปริ้นท์ที่อยู่ข้างนอกใช้ไฟล์นี้ด้วย */}
       <body style={{ margin: 0, background: '#f8fafc', fontFamily: "'Sarabun', 'Noto Sans Thai', sans-serif", minHeight: '100vh' }}>
-        <main>{children}</main>
+        <AuthGate><main>{children}</main></AuthGate>
       </body>
     </html>
   );

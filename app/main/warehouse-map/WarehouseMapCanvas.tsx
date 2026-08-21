@@ -294,7 +294,7 @@ export default function WarehouseMapCanvas({
           <Layer listening={false}>
             {gridLines}
 
-            {/* กรอบอาคารและมิติ อ้างอิงแปลนคลัง 24 × 25 เมตร */}
+            {/* กรอบอาคารอ้างอิงแปลนคลัง */}
             <Rect
               x={40}
               y={50}
@@ -312,37 +312,6 @@ export default function WarehouseMapCanvas({
             <Line points={[48, 58, 912, 58]} stroke="#cad5e2" strokeWidth={1} />
             <Line points={[48, 652, 532, 652]} stroke="#cad5e2" strokeWidth={1} />
             <Line points={[708, 652, 912, 652]} stroke="#cad5e2" strokeWidth={1} />
-
-            <Line points={[40, 25, 920, 25]} stroke="#67a646" strokeWidth={1.5} />
-            {[40, 216, 392, 568, 744, 920].map((x) => (
-              <Line key={`dimension-x-${x}`} points={[x, 18, x, 32]} stroke="#67a646" strokeWidth={1.5} />
-            ))}
-            <Text
-              text="25 เมตร"
-              x={390}
-              y={6}
-              width={180}
-              align="center"
-              fontSize={12}
-              fontFamily="Sarabun, Arial"
-              fontStyle="bold"
-              fill="#477b31"
-            />
-            <Line points={[18, 50, 18, 660]} stroke="#67a646" strokeWidth={1.5} />
-            <Line points={[11, 50, 25, 50]} stroke="#67a646" strokeWidth={1.5} />
-            <Line points={[11, 660, 25, 660]} stroke="#67a646" strokeWidth={1.5} />
-            <Text
-              text="24 เมตร"
-              x={5}
-              y={415}
-              width={120}
-              align="center"
-              fontSize={12}
-              fontFamily="Sarabun, Arial"
-              fontStyle="bold"
-              fill="#477b31"
-              rotation={-90}
-            />
 
             {[
               { x: 130, width: 100, text: 'ทางเดินหลัก' },
@@ -385,7 +354,7 @@ export default function WarehouseMapCanvas({
               fill="#b33c2e"
             />
             <Text
-              text="ทางเข้า 7 เมตร"
+              text="ทางเข้า"
               x={540}
               y={650}
               width={160}

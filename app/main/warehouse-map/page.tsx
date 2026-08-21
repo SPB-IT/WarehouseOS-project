@@ -57,7 +57,6 @@ export default function WarehouseMapPage() {
   const [formFloor, setFormFloor] = useState('ชั้น 1');
   const [formColor, setFormColor] = useState(WAREHOUSE_ZONE_COLORS[0]);
   const [formRackLevels, setFormRackLevels] = useState(4);
-  const [formPalletsPerLevel, setFormPalletsPerLevel] = useState(2);
   const [formInitialRackCount, setFormInitialRackCount] = useState(1);
   const [notice, setNotice] = useState('');
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -233,7 +232,6 @@ export default function WarehouseMapPage() {
     setFormFloor('ชั้น 1');
     setFormColor(WAREHOUSE_ZONE_COLORS[zones.length % WAREHOUSE_ZONE_COLORS.length]);
     setFormRackLevels(4);
-    setFormPalletsPerLevel(2);
     setFormInitialRackCount(1);
     setModalOpen(true);
   };
@@ -247,7 +245,6 @@ export default function WarehouseMapPage() {
     setFormFloor(zone.floor);
     setFormColor(zone.color);
     setFormRackLevels(zone.rackLevels ?? 4);
-    setFormPalletsPerLevel(zone.palletsPerLevel ?? 2);
     setFormInitialRackCount(rackCounts[zone.id] ?? 1);
     setModalOpen(true);
   };
@@ -263,7 +260,7 @@ export default function WarehouseMapPage() {
     const floor = formFloor.trim();
     if (!name || !locationCode || !floor) return;
     const rackLevels = Math.min(Math.max(Math.round(formRackLevels), 1), 20);
-    const palletsPerLevel = Math.min(Math.max(Math.round(formPalletsPerLevel), 1), 10);
+    const palletsPerLevel = 1;
     const initialRackCount = Math.min(Math.max(Math.round(formInitialRackCount), 1), 20);
 
     setSaving(true);
@@ -303,7 +300,7 @@ export default function WarehouseMapPage() {
         }
         setZones((current) => [...current, zone]);
         setSelectedIds([zone.id]);
-        setNotice(`เพิ่มโซนพร้อม ${initialRackCount} Rack · ${rackLevels} ชั้น × ${palletsPerLevel} พาเลตแล้ว`);
+        setNotice(`เพิ่มโซนพร้อม ${initialRackCount} Rack · ${rackLevels} ชั้นแล้ว`);
       }
       closeModal();
     } catch {
@@ -431,7 +428,7 @@ export default function WarehouseMapPage() {
       }
       setZones(nextZones);
       setSelectedIds([]);
-      setNotice('จัดผังตามแปลนคลัง 24 × 25 เมตรแล้ว');
+      setNotice('จัดผังตามแปลนคลังแล้ว');
     } catch {
       setNotice('จัดผังตามแปลนไม่สำเร็จ กรุณาลองใหม่');
     } finally {
@@ -517,7 +514,7 @@ export default function WarehouseMapPage() {
           />
           <button type="button" className="wh-btn wh-btn-gold" onClick={() => void applyReferencePlan()} disabled={!hydrated || saving}>
             <Icon><path d="M3 6h18M3 18h18M6 3v18M18 3v18"/><path d="M10 10h4v4h-4z"/></Icon>
-            จัดตามแปลน 24×25 ม.
+            จัดตามแปลน
           </button>
           <button type="button" className="wh-btn wh-btn-ghost" onClick={() => importInputRef.current?.click()}>
             <Icon><path d="M12 3v12m0-12-4 4m4-4 4 4"/><path d="M5 14v5h14v-5"/></Icon>
@@ -593,7 +590,7 @@ export default function WarehouseMapPage() {
                   <span className="wm-zone-copy">
                     <span className="wm-zone-name">{zone.name}</span>
                     <span className="wm-zone-size">
-                      {zone.locationCode} · {rackCounts[zone.id] ?? 0} Rack · {zone.rackLevels ?? 4} ชั้น × {zone.palletsPerLevel ?? 2} พาเลต
+                      {zone.locationCode} · {rackCounts[zone.id] ?? 0} Rack · {zone.rackLevels ?? 4} ชั้น
                     </span>
                   </span>
                 </button>
@@ -735,18 +732,6 @@ export default function WarehouseMapPage() {
                 />
               </div>
               <div className="wm-modal-field">
-                <label className="wh-label" htmlFor="wm-pallets-level">พาเลต / ชั้น</label>
-                <input
-                  id="wm-pallets-level"
-                  className="wh-input"
-                  type="number"
-                  min={1}
-                  max={10}
-                  value={formPalletsPerLevel}
-                  onChange={(event) => setFormPalletsPerLevel(Number(event.target.value) || 1)}
-                />
-              </div>
-              <div className="wm-modal-field">
                 <label className="wh-label" htmlFor="wm-initial-racks">จำนวน Rack เริ่มต้น</label>
                 <input
                   id="wm-initial-racks"
@@ -760,7 +745,7 @@ export default function WarehouseMapPage() {
                 />
               </div>
               <div className="wm-config-note">
-                รวม {formRackLevels * formPalletsPerLevel} ช่องต่อ Rack
+                รวม {formRackLevels} ตำแหน่งต่อ Rack (ชั้นละ 1 ตำแหน่ง)
                 {editingZone ? ' · การแก้จำนวนชั้นมีผลกับ Rack ที่เพิ่มใหม่ ส่วน Rack เดิมและสินค้าจะไม่ถูกลบ' : ''}
               </div>
             </div>

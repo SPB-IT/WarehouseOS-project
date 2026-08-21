@@ -10,6 +10,7 @@ export interface WarehouseZone {
   color: string;
   rackLevels?: number;
   palletsPerLevel?: number;
+  isArchived?: boolean;
 }
 
 export interface ZonePositionUpdate {

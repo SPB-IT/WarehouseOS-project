@@ -190,7 +190,7 @@ function normalizeZone(value: unknown): WarehouseZone | null {
     height: Math.max(zone.height, 40),
     color: zone.color,
     rackLevels: isFiniteNumber(zone.rackLevels) ? Math.max(1, Math.round(zone.rackLevels)) : 4,
-    palletsPerLevel: isFiniteNumber(zone.palletsPerLevel) ? Math.max(1, Math.round(zone.palletsPerLevel)) : 2,
+    palletsPerLevel: 1,
   };
 }
 
@@ -198,7 +198,7 @@ export function cloneDefaultWarehouseZones() {
   return DEFAULT_WAREHOUSE_ZONES.map((zone) => ({
     ...zone,
     rackLevels: zone.rackLevels ?? 4,
-    palletsPerLevel: zone.palletsPerLevel ?? 2,
+    palletsPerLevel: 1,
   }));
 }
 

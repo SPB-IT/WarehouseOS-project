@@ -2,12 +2,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '../../../lib/supabase';
+import { fetchAllSupabaseRows } from '../../../lib/supabasePagination';
 import type { DashboardStats, Withdrawal } from '../../../types/warehouse';
 
 export default function MainPage() {
   const [stats, setStats] = useState<DashboardStats>({
     totalDeposits: 0, totalItems: 0, totalRemaining: 0,
-    activeItems: 0, returnedItems: 0, totalWithdrawals: 0,
+    activeItems: 0, returnedItems: 0, totalWithdrawals: 0, demoItems: 0,
   });
   const [recentWithdrawals, setRecentWithdrawals] = useState<Withdrawal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -15,33 +16,51 @@ export default function MainPage() {
   // ปรับปรุงฟังก์ชัน fetchData ให้ไม่ไปขัดจังหวะช่วงก่อน Mount
   const fetchData = useCallback(async (isMounted: () => boolean = () => true) => {
     try {
-      const [
-        { data: items },
-        { data: deposits },
-        { count: withdrawalCount },
-        { data: recentW },
-      ] = await Promise.all([
-        supabase.from('deposit_items').select('quantity, remaining_quantity, status'),
-        supabase.from('deposits').select('id'),
-        supabase.from('withdrawals').select('*', { count: 'exact', head: true }),
+      const [{ data: statRows, error: statsError }, { data: recentW }] = await Promise.all([
+        supabase.rpc('warehouse_dashboard_stats', { p_include_demo: true }),
         supabase.from('withdrawals')
           .select('*, deposit_items(item_name, deposits(customer_name, tracking_id))')
           .order('withdraw_date', { ascending: false })
           .limit(8),
       ]);
 
-      if (!isMounted()) return; // ถ้าคอมโพเนนต์ไม่ได้อยู่บนจอแล้ว ไม่ต้องทำต่อ
-
-      if (items) {
-        setStats({
-          totalDeposits: deposits?.length ?? 0,
-          totalItems: items.reduce((a, i) => a + (i.quantity ?? 0), 0),
-          totalRemaining: items.reduce((a, i) => a + (i.remaining_quantity ?? 0), 0),
-          activeItems: items.filter(i => i.status !== 'คืนแล้ว' && i.remaining_quantity > 0).length,
-          returnedItems: items.filter(i => i.status === 'คืนแล้ว' || i.remaining_quantity <= 0).length,
-          totalWithdrawals: withdrawalCount ?? 0,
-        });
+      let nextStats: DashboardStats;
+      const rpcStats = !statsError && Array.isArray(statRows) ? statRows[0] : null;
+      if (rpcStats) {
+        nextStats = {
+          totalDeposits: Number(rpcStats.total_deposits ?? 0),
+          totalItems: Number(rpcStats.total_quantity ?? 0),
+          totalRemaining: Number(rpcStats.total_remaining ?? 0),
+          activeItems: Number(rpcStats.active_items ?? 0),
+          returnedItems: Number(rpcStats.returned_items ?? 0),
+          totalWithdrawals: Number(rpcStats.total_withdrawals ?? 0),
+          demoItems: Number(rpcStats.demo_items ?? 0),
+        };
+      } else {
+        const [items, depositCountResponse, withdrawalCountResponse] = await Promise.all([
+          fetchAllSupabaseRows(async (from, to) => {
+            const { data, error } = await supabase
+              .from('deposit_items')
+              .select('quantity, remaining_quantity, status, item_code')
+              .range(from, to);
+            return { data, error };
+          }),
+          supabase.from('deposits').select('id', { count: 'exact', head: true }),
+          supabase.from('withdrawals').select('id', { count: 'exact', head: true }),
+        ]);
+        nextStats = {
+          totalDeposits: depositCountResponse.count ?? 0,
+          totalItems: items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0),
+          totalRemaining: items.reduce((sum, item) => sum + Number(item.remaining_quantity ?? 0), 0),
+          activeItems: items.filter((item) => item.status !== 'คืนแล้ว' && item.remaining_quantity > 0).length,
+          returnedItems: items.filter((item) => item.status === 'คืนแล้ว' || item.remaining_quantity <= 0).length,
+          totalWithdrawals: withdrawalCountResponse.count ?? 0,
+          demoItems: items.filter((item) => item.item_code?.startsWith('MOCK-') || item.item_code?.startsWith('DEMO-')).length,
+        };
       }
+
+      if (!isMounted()) return; // ถ้าคอมโพเนนต์ไม่ได้อยู่บนจอแล้ว ไม่ต้องทำต่อ
+      setStats(nextStats);
       if (recentW) setRecentWithdrawals(recentW as Withdrawal[]);
     } catch (e) { 
       console.error(e); 
@@ -102,6 +121,11 @@ export default function MainPage() {
       <div className="wh-page-header">
         <h1 className="wh-page-title">ภาพรวมคลังสินค้า</h1>
         <p className="wh-page-sub">สรุปสถานะและกิจกรรมล่าสุดของระบบ สำเพ็งบุรีรัมย์</p>
+        {!loading && stats.demoItems > 0 && (
+          <p style={{ margin: '6px 0 0', color: '#9a6700', fontSize: 12, fontWeight: 700 }}>
+            มีข้อมูลตัวอย่าง {stats.demoItems.toLocaleString('th-TH')} รายการรวมอยู่ในยอดนี้
+          </p>
+        )}
       </div>
 
       {/* Stat cards */}

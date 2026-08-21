@@ -1,7 +1,9 @@
 'use client';
-import { useState, useEffect, Suspense } from 'react';
+import { useCallback, useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
+import { fetchAllSupabaseRows } from '../../../lib/supabasePagination';
+import { displayStorageLocation } from '../../../lib/warehouseLocation';
 import type { Deposit, DepositItem } from '../../../types/warehouse';
 import { Toast, useToast } from '../components/Toast';
 
@@ -32,16 +34,25 @@ function ReturnItemFormInner() {
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
 
-  const loadInventoryItems = async () => {
+  const loadInventoryItems = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('deposits').select('*, deposit_items(*)')
-      .order('id', { ascending: sortBy === 'oldest' });
-    if (!error && data) setAllDeposits(data as Deposit[]);
+    try {
+      const data = await fetchAllSupabaseRows<Deposit>(async (from, to) => {
+        const { data: pageRows, error } = await supabase
+          .from('deposits').select('*, deposit_items(*)')
+          .order('id', { ascending: sortBy === 'oldest' })
+          .range(from, to);
+        return { data: pageRows as unknown as Deposit[], error };
+      });
+      setAllDeposits(data);
+    } catch (error) {
+      console.error('[withdraw] fetch failed:', error);
+      setAllDeposits([]);
+    }
     setLoading(false);
-  };
+  }, [sortBy]);
 
-  useEffect(() => { loadInventoryItems(); }, [sortBy]);
+  useEffect(() => { void loadInventoryItems(); }, [loadInventoryItems]);
 
   // ถ้าเข้ามาจากหน้าสรุปสินค้า (inventory) พร้อม query ?q=... ให้เติมช่องค้นหาให้อัตโนมัติ
   useEffect(() => {
@@ -91,21 +102,17 @@ function ReturnItemFormInner() {
     if (!staffName) { toast('กรุณากรอกชื่อพนักงานผู้คืนของ', 'info'); return; }
     setLoading(true);
     try {
-      const createdWithdrawIds: number[] = [];
-      await Promise.all(itemsToReturn.map(async item => {
-        const qty = returnQuantities[item.id] || 0;
-        if (qty <= 0) return;
-        const { data: logData, error: logErr } = await supabase.from('withdrawals')
-          .insert([{ deposit_item_id: item.id, withdraw_quantity: qty, staff_signature_name: staffName, remark: remark || 'คืนสินค้าเรียบร้อยแล้ว', status: 'completed' }])
-          .select().single();
-        if (logErr) throw new Error(`บันทึกประวัติล้มเหลว: ${logErr.message}`);
-        if (logData) createdWithdrawIds.push(logData.id);
-        const newRem = item.remaining_quantity - qty;
-        const { error: itemErr } = await supabase.from('deposit_items')
-          .update({ remaining_quantity: Math.max(0, newRem), status: newRem <= 0 ? 'คืนแล้ว' : 'กำลังฝาก' })
-          .eq('id', item.id);
-        if (itemErr) throw new Error(`อัปเดตสต็อกล้มเหลว: ${itemErr.message}`);
-      }));
+      const requestItems = itemsToReturn
+        .map((item) => ({ deposit_item_id: item.id, quantity: returnQuantities[item.id] || 0 }))
+        .filter((item) => item.quantity > 0);
+      const { data: returnRows, error: returnError } = await supabase.rpc('return_warehouse_items', {
+        p_items: requestItems,
+        p_staff_name: staffName,
+        p_remark: remark || null,
+      });
+      if (returnError) throw new Error(returnError.message);
+      const createdWithdrawIds = ((returnRows ?? []) as { withdrawal_id: number }[])
+        .map((row) => row.withdrawal_id);
       if (createdWithdrawIds.length > 0) {
         const w = 800, h = 900;
         window.open(`/print-withdraw/${createdWithdrawIds.join(',')}`, 'PrintPopup-Bulk', `width=${w},height=${h},top=${window.screen.height/2-h/2},left=${window.screen.width/2-w/2},scrollbars=yes,status=no,toolbar=no,menubar=no`);
@@ -402,7 +409,7 @@ function ReturnItemFormInner() {
                         </span>
                       </div>
                     </td>
-                    <td style={{ textAlign: 'center', color: 'var(--sp-text2)', fontSize: 13 }}>{row.storage_location || '—'}</td>
+                    <td style={{ textAlign: 'center', color: 'var(--sp-text2)', fontSize: 13 }}>{displayStorageLocation(row.storage_location) || '—'}</td>
                     <td style={{ textAlign: 'center' }} onClick={e => e.stopPropagation()}>
                       <button type="button" onClick={() => handleToggle(row)} className="wh-btn" style={{
                         padding: '5px 13px', fontSize: 12.5, borderRadius: 8, fontWeight: 700,

@@ -48,8 +48,9 @@ for (const item of items) {
   }
   if (rack.zone_id !== zone.id || bin.rack_id !== rack.id) relationshipMismatch += 1;
   const rackNumber = Number(rack.code.match(/-R0*(\d+)$/i)?.[1] ?? 0);
-  const exactLocation = `ช่อง ${zone.location_code} / ชั้น ${bin.shelf_level ?? 1} / Rack ${rackNumber} / พาเลต ${bin.col_no ?? 1}`;
-  if (item.storage_location !== exactLocation) locationMismatch += 1;
+  const exactLocation = `ช่อง ${zone.location_code} / ชั้น ${bin.shelf_level ?? 1} / Rack ${rackNumber}`;
+  const normalizedLocation = item.storage_location?.replace(/\s*\/\s*(?:ช่องย่อย|พาเลต)\s*\d+\s*$/i, '').trim();
+  if (normalizedLocation !== exactLocation) locationMismatch += 1;
 }
 
 console.log(JSON.stringify({

@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { supabase } from '../../../lib/supabase';
+import { fetchAllSupabaseRows } from '../../../lib/supabasePagination';
 import type { Withdrawal } from '../../../types/warehouse';
 
 type WithdrawalRow = Withdrawal & {
@@ -19,89 +20,40 @@ export default function HistoryPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(30);
-  const [totalCount, setTotalCount] = useState(0);
   const [exportLoading, setExportLoading] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>('date_desc');
 
-  useEffect(() => { fetchHistory(); }, [page, pageSize]);
+  useEffect(() => { void fetchHistory(); }, []);
   useEffect(() => { setPage(0); }, [searchTerm, sortKey]);
 
   const fetchHistory = async () => {
     setLoading(true);
-    const from = page * pageSize;
-    const to = from + pageSize - 1;
-
-    const { data: wdata, count, error: wErr } = await supabase
-      .from('withdrawals')
-      .select('*', { count: 'exact' })
-      .order('withdraw_date', { ascending: false })
-      .range(from, to);
-
-    if (wErr) {
-      console.error('[history] fetch withdrawals failed:', wErr.message);
-      setRows([]); setTotalCount(0); setLoading(false);
-      return;
+    try {
+      const data = await fetchAllSupabaseRows<WithdrawalRow>(async (from, to) => {
+        const { data: pageRows, error } = await supabase
+          .from('withdrawals')
+          .select('*, deposit_items(item_name, unit, deposits(tracking_id, customer_name, customer_phone))')
+          .order('withdraw_date', { ascending: false })
+          .range(from, to);
+        return { data: pageRows as unknown as WithdrawalRow[], error };
+      });
+      setRows(data);
+    } catch (error) {
+      console.error('[history] fetch failed:', error);
+      setRows([]);
+    } finally {
+      setLoading(false);
     }
-
-    const withdrawals = wdata || [];
-    setTotalCount(count ?? 0);
-
-    if (withdrawals.length === 0) {
-      setRows([]); setLoading(false);
-      return;
-    }
-
-    const itemIds = [...new Set(withdrawals.map((w: any) => w.deposit_item_id).filter(Boolean))];
-    const { data: itemsData, error: iErr } = itemIds.length
-      ? await supabase.from('deposit_items').select('id, item_name, unit, deposit_id').in('id', itemIds)
-      : { data: [], error: null };
-    if (iErr) console.error('[history] fetch deposit_items failed:', iErr.message);
-
-    const depositIds = [...new Set((itemsData || []).map((i: any) => i.deposit_id).filter(Boolean))];
-    const { data: depositsData, error: dErr } = depositIds.length
-      ? await supabase.from('deposits').select('id, tracking_id, customer_name, customer_phone').in('id', depositIds)
-      : { data: [], error: null };
-    if (dErr) console.error('[history] fetch deposits failed:', dErr.message);
-
-    const depositsById = new Map((depositsData || []).map((d: any) => [d.id, d]));
-    const itemsById = new Map((itemsData || []).map((i: any) => [i.id, { ...i, deposits: depositsById.get(i.deposit_id) }]));
-
-    const merged: WithdrawalRow[] = withdrawals.map((w: any) => ({
-      ...w,
-      deposit_items: itemsById.get(w.deposit_item_id),
-    }));
-
-    setRows(merged);
-    setLoading(false);
   };
 
   const handleExportCSV = async () => {
     setExportLoading(true);
-    const { data: wdata, error: wErr } = await supabase
-      .from('withdrawals')
-      .select('*')
-      .order('withdraw_date', { ascending: false });
-    if (wErr) { console.error('[history export] fetch withdrawals failed:', wErr.message); setExportLoading(false); return; }
-    const withdrawals = wdata || [];
-    if (withdrawals.length === 0) { setExportLoading(false); return; }
-
-    const itemIds = [...new Set(withdrawals.map((w: any) => w.deposit_item_id).filter(Boolean))];
-    const { data: itemsData } = itemIds.length
-      ? await supabase.from('deposit_items').select('id, item_name, unit, deposit_id').in('id', itemIds)
-      : { data: [] as any[] };
-
-    const depositIds = [...new Set((itemsData || []).map((i: any) => i.deposit_id).filter(Boolean))];
-    const { data: depositsData } = depositIds.length
-      ? await supabase.from('deposits').select('id, tracking_id, customer_name, customer_phone').in('id', depositIds)
-      : { data: [] as any[] };
-
-    const depositsById = new Map((depositsData || []).map((d: any) => [d.id, d]));
-    const itemsById = new Map((itemsData || []).map((i: any) => [i.id, { ...i, deposits: depositsById.get(i.deposit_id) }]));
-    const data: WithdrawalRow[] = withdrawals.map((w: any) => ({ ...w, deposit_items: itemsById.get(w.deposit_item_id) }));
+    const data = filtered;
+    if (data.length === 0) { setExportLoading(false); return; }
 
     const csvRows = [
       ['วันที่คืน', 'Tracking ID', 'ชื่อผู้ฝาก', 'เบอร์โทร', 'สินค้า', 'จำนวนที่คืน', 'หน่วย', 'พนักงาน', 'หมายเหตุ'],
-      ...(data as WithdrawalRow[]).map(w => {
+      ...data.map(w => {
         const d = w.withdraw_date ? new Date(w.withdraw_date) : null;
         const dateStr = d ? `${d.getDate()}/${d.getMonth()+1}/${d.getFullYear()+543} ${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}` : '';
         return [
@@ -143,7 +95,9 @@ export default function HistoryPage() {
     return new Date(b.withdraw_date || 0).getTime() - new Date(a.withdraw_date || 0).getTime();
   });
 
+  const totalCount = filtered.length;
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const visibleRows = filtered.slice(page * pageSize, (page + 1) * pageSize);
 
   return (
     <div className="wh-page">
@@ -219,9 +173,9 @@ export default function HistoryPage() {
             <tbody>
               {loading ? (
                 <tr><td colSpan={8} className="wh-empty-row">กำลังโหลดข้อมูล...</td></tr>
-              ) : filtered.length === 0 ? (
+              ) : visibleRows.length === 0 ? (
                 <tr><td colSpan={8} className="wh-empty-row">ไม่พบข้อมูล</td></tr>
-              ) : filtered.map(w => {
+              ) : visibleRows.map(w => {
                 const d = w.withdraw_date ? new Date(w.withdraw_date) : null;
                 const dateStr = d ? `${d.getDate()}/${d.getMonth()+1}/${d.getFullYear()+543}` : '—';
                 const timeStr = d ? `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')} น.` : '';
@@ -275,7 +229,7 @@ export default function HistoryPage() {
         {totalPages >= 1 && (
           <div style={{ padding: '12px 20px', borderTop: '1.5px solid var(--sp-bg2)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
             <span style={{ fontSize: 12.5, color: 'var(--sp-text3)' }}>
-              หน้า {page + 1} / {totalPages} &nbsp;(แสดง {page * pageSize + 1}–{Math.min((page + 1) * pageSize, totalCount)} จาก {totalCount} รายการ)
+              หน้า {page + 1} / {totalPages} &nbsp;(แสดง {totalCount === 0 ? 0 : page * pageSize + 1}–{Math.min((page + 1) * pageSize, totalCount)} จาก {totalCount} รายการ)
             </span>
             <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
               <button onClick={() => setPage(0)} disabled={page === 0} className="wh-btn wh-btn-ghost" style={{ padding: '5px 9px', fontSize: 12.5, opacity: page === 0 ? 0.4 : 1 }}>«</button>

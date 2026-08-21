@@ -26,6 +26,7 @@ export interface DepositItem {
   warehouse_bin_id?: string | null;
   detail?: string;
   item_image_url?: string;
+  is_demo?: boolean;
   created_at?: string;
   deposits?: Deposit;
 }
@@ -49,4 +50,5 @@ export interface DashboardStats {
   activeItems: number;
   returnedItems: number;
   totalWithdrawals: number;
+  demoItems: number;
 }

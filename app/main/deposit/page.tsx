@@ -1,6 +1,8 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
 import { supabase } from '../../../lib/supabase';
+import { fetchAllSupabaseRows } from '../../../lib/supabasePagination';
+import { displayItemDetail, displayStorageLocation } from '../../../lib/warehouseLocation';
 import { CldUploadWidget } from 'next-cloudinary';
 import { Toast, useToast } from '../components/Toast';
 import type { Deposit, DepositItem } from '../../../types/warehouse';
@@ -128,11 +130,20 @@ export default function DepositPage() {
 
   const fetchDeposits = async () => {
     setListLoading(true);
-    const { data } = await supabase
-      .from('deposits')
-      .select('*, deposit_items(*)')
-      .order('id', { ascending: false });
-    setDeposits((data as DepositWithItems[]) || []);
+    try {
+      const data = await fetchAllSupabaseRows<DepositWithItems>(async (from, to) => {
+        const { data: pageRows, error } = await supabase
+          .from('deposits')
+          .select('*, deposit_items(*)')
+          .order('id', { ascending: false })
+          .range(from, to);
+        return { data: pageRows as unknown as DepositWithItems[], error };
+      });
+      setDeposits(data);
+    } catch (error) {
+      console.error('[deposits] fetch failed:', error);
+      setDeposits([]);
+    }
     setListLoading(false);
   };
 
@@ -166,21 +177,12 @@ export default function DepositPage() {
       return hasItemName && (!item.warehouseZoneId || !item.warehouseRackId || !item.warehouseBinId);
     });
     if (hasIncompletePlacement) {
-      toast('กรุณาเลือกโซน, Rack และชั้น/พาเลตให้ครบทุกสินค้า', 'error');
+      toast('กรุณาเลือกโซน, Rack และชั้นให้ครบทุกสินค้า', 'error');
       setLoading(false);
       return;
     }
 
     if (editingDeposit) {
-      const { error: depErr } = await supabase.from('deposits').update({
-        customer_name: formData.get('customer_name'),
-        customer_phone: formData.get('customer_phone'),
-        deposit_date: formData.get('deposit_date') as string,
-        staff_received_name: formData.get('staff_received_name'),
-      }).eq('id', editingDeposit.id);
-
-      if (depErr) { toast('แก้ไขข้อมูลไม่สำเร็จ: ' + depErr.message, 'error'); setLoading(false); return; }
-
       const newItems = formItems.map(item => {
         const selectedZone = warehouseZones.find(zone => zone.id === item.warehouseZoneId);
         const selectedRack = warehouseRacks.find(rack => rack.id === item.warehouseRackId);
@@ -201,12 +203,18 @@ export default function DepositPage() {
         };
       }).filter(i => i.item_name);
 
-      if (newItems.length > 0) {
-        const { data: insertedItems, error: itemErr } = await supabase.from('deposit_items').insert(newItems).select('id');
-        if (itemErr) { toast('เพิ่มสินค้าพลาด: ' + itemErr.message, 'error'); setLoading(false); return; }
-        await Promise.all((insertedItems ?? []).map((savedItem, index) =>
-          supabase.from('deposit_items').update({ storage_location: newItems[index].storage_location }).eq('id', savedItem.id),
-        ));
+      const { error: updateError } = await supabase.rpc('update_warehouse_deposit', {
+        p_deposit_id: editingDeposit.id,
+        p_customer_name: String(formData.get('customer_name') ?? ''),
+        p_customer_phone: String(formData.get('customer_phone') ?? ''),
+        p_deposit_date: (formData.get('deposit_date') as string) || new Date().toISOString(),
+        p_staff_received_name: String(formData.get('staff_received_name') ?? ''),
+        p_items: newItems,
+      });
+      if (updateError) {
+        toast('แก้ไขข้อมูลไม่สำเร็จ: ' + updateError.message, 'error');
+        setLoading(false);
+        return;
       }
 
       toast('แก้ไขข้อมูลสำเร็จ!', 'success');
@@ -216,46 +224,39 @@ export default function DepositPage() {
       const trackingId = generateTrackingId();
       const depositDateInput = formData.get('deposit_date') as string;
 
-      const { data: deposit, error: depError } = await supabase
-        .from('deposits')
-        .insert([{
-          tracking_id: trackingId,
-          customer_name: formData.get('customer_name'),
-          customer_phone: formData.get('customer_phone'),
-          deposit_date: depositDateInput || new Date().toISOString(),
-          staff_received_name: formData.get('staff_received_name'),
-        }]).select().single();
-
-      if (depError) { toast('บันทึกไม่สำเร็จ: ' + depError.message, 'error'); setLoading(false); return; }
-
       const itemsToSave = formItems.map(item => {
-        const selectedZone = warehouseZones.find(zone => zone.id === item.warehouseZoneId);
-        const selectedRack = warehouseRacks.find(rack => rack.id === item.warehouseRackId);
-        const selectedBin = warehouseBins.find(bin => bin.id === item.warehouseBinId);
         return {
-          deposit_id: deposit.id,
           item_name: formData.get(`item_name_${item.id}`),
           item_code: formData.get(`item_code_${item.id}`) || null,
           quantity: parseInt(formData.get(`quantity_${item.id}`) as string),
-          remaining_quantity: parseInt(formData.get(`quantity_${item.id}`) as string),
           unit: formData.get(`unit_${item.id}`),
           warehouse_zone_id: item.warehouseZoneId || null,
           warehouse_rack_id: item.warehouseRackId || null,
           warehouse_bin_id: item.warehouseBinId || null,
-          storage_location: formatWarehousePlacement(selectedZone, selectedRack, selectedBin),
           detail: formData.get(`detail_${item.id}`),
           item_image_url: item.imageUrl,
+          is_demo: false,
         };
       });
 
-      const { data: insertedItems, error: itemError } = await supabase.from('deposit_items').insert(itemsToSave).select('id');
-      if (itemError) {
-        toast('บันทึกสินค้าพลาด: ' + itemError.message, 'error');
+      const { data: result, error: saveError } = await supabase.rpc('create_warehouse_deposit', {
+        p_tracking_id: trackingId,
+        p_customer_name: String(formData.get('customer_name') ?? ''),
+        p_customer_phone: String(formData.get('customer_phone') ?? ''),
+        p_deposit_date: depositDateInput || new Date().toISOString(),
+        p_staff_received_name: String(formData.get('staff_received_name') ?? ''),
+        p_items: itemsToSave,
+      });
+      if (saveError) {
+        toast('บันทึกไม่สำเร็จ: ' + saveError.message, 'error');
       } else {
-        await Promise.all((insertedItems ?? []).map((savedItem, index) =>
-          supabase.from('deposit_items').update({ storage_location: itemsToSave[index].storage_location }).eq('id', savedItem.id),
-        ));
-        setSuccessModal({ trackingId, depositId: deposit.id });
+        const saved = result as { deposit_id?: number; tracking_id?: string } | null;
+        if (!saved?.deposit_id) {
+          toast('บันทึกสำเร็จแต่ไม่พบเลขใบรับฝาก กรุณารีเฟรชหน้าจอ', 'info');
+          setLoading(false);
+          return;
+        }
+        setSuccessModal({ trackingId: saved.tracking_id || trackingId, depositId: saved.deposit_id });
         setShowForm(false);
         formRef.current?.reset();
         setFormItems([createDepositFormItem()]);
@@ -284,6 +285,10 @@ export default function DepositPage() {
   };
 
   const openEditItem = (item: DepositItem) => {
+    const currentBin = warehouseBins.find((bin) => bin.id === item.warehouse_bin_id);
+    const canonicalBin = currentBin
+      ? getRackBins(warehouseBins, currentBin.rackId).find((bin) => bin.shelfLevel === currentBin.shelfLevel)
+      : undefined;
     setEditingItem(item);
     setEditItemForm({
       item_name: item.item_name || '',
@@ -294,7 +299,7 @@ export default function DepositPage() {
       storage_location: item.storage_location || '',
       warehouse_zone_id: item.warehouse_zone_id || '',
       warehouse_rack_id: item.warehouse_rack_id || '',
-      warehouse_bin_id: item.warehouse_bin_id || '',
+      warehouse_bin_id: canonicalBin?.id || item.warehouse_bin_id || '',
     });
   };
 
@@ -305,16 +310,25 @@ export default function DepositPage() {
     const selectedRack = warehouseRacks.find(rack => rack.id === editItemForm.warehouse_rack_id);
     const selectedBin = warehouseBins.find(bin => bin.id === editItemForm.warehouse_bin_id);
     if (!selectedZone || !selectedRack || !selectedBin) {
-      toast('กรุณาเลือกโซน, Rack และชั้น/พาเลตให้ครบ', 'error');
+      toast('กรุณาเลือกโซน, Rack และชั้นให้ครบ', 'error');
       setEditItemLoading(false);
       return;
     }
+    const alreadyReturned = Math.max(0, editingItem.quantity - editingItem.remaining_quantity);
+    if (editItemForm.quantity < alreadyReturned) {
+      toast(`จำนวนทั้งหมดต้องไม่น้อยกว่าจำนวนที่คืนไปแล้ว ${alreadyReturned} ${editingItem.unit}`, 'error');
+      setEditItemLoading(false);
+      return;
+    }
+    const nextRemaining = editItemForm.quantity - alreadyReturned;
     const exactLocation = formatWarehousePlacement(selectedZone, selectedRack, selectedBin);
     const { error } = await supabase.from('deposit_items').update({
       item_name: editItemForm.item_name,
       item_code: editItemForm.item_code || null,
       detail: editItemForm.detail,
       quantity: editItemForm.quantity,
+      remaining_quantity: nextRemaining,
+      status: nextRemaining <= 0 ? 'คืนแล้ว' : 'กำลังฝาก',
       unit: editItemForm.unit,
       warehouse_zone_id: editItemForm.warehouse_zone_id,
       warehouse_rack_id: editItemForm.warehouse_rack_id,
@@ -324,12 +338,9 @@ export default function DepositPage() {
     if (error) {
       toast('แก้ไขไม่สำเร็จ: ' + error.message, 'error');
     } else {
-      const { error: locationError } = await supabase
-        .from('deposit_items')
-        .update({ storage_location: exactLocation })
-        .eq('id', editingItem.id);
-      if (locationError) toast('อัปเดตพิกัดไม่สำเร็จ: ' + locationError.message, 'error');
-      else { toast('แก้ไขสินค้าสำเร็จ!', 'success'); setEditingItem(null); await fetchDeposits(); }
+      toast('แก้ไขสินค้าสำเร็จ!', 'success');
+      setEditingItem(null);
+      await fetchDeposits();
     }
     setEditItemLoading(false);
   };
@@ -532,7 +543,7 @@ export default function DepositPage() {
                               </select>
                             </div>
                             <div>
-                              <label className="wh-label">ชั้น / พาเลต <span style={{ color: '#ef4444' }}>*</span></label>
+                              <label className="wh-label">ชั้น <span style={{ color: '#ef4444' }}>*</span></label>
                               <select
                                 name={`warehouse_bin_id_${item.id}`}
                                 className="wh-select"
@@ -545,7 +556,7 @@ export default function DepositPage() {
                               >
                                 <option value="">— เลือกตำแหน่ง —</option>
                                 {getRackBins(warehouseBins, item.warehouseRackId).map(bin => (
-                                  <option key={bin.id} value={bin.id}>ชั้น {bin.shelfLevel} · พาเลต {bin.palletNumber}</option>
+                                  <option key={bin.id} value={bin.id}>ชั้น {bin.shelfLevel}</option>
                                 ))}
                               </select>
                             </div>
@@ -559,7 +570,7 @@ export default function DepositPage() {
                                 warehouseRacks.find(rack => rack.id === item.warehouseRackId),
                                 warehouseBins.find(bin => bin.id === item.warehouseBinId),
                               )}
-                              placeholder="เลือกโซน, Rack และชั้น/พาเลตให้ครบ"
+                              placeholder="เลือกโซน, Rack และชั้นให้ครบ"
                               readOnly
                             />
                           </div>
@@ -680,7 +691,7 @@ export default function DepositPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="wh-label">ชั้น / พาเลต</label>
+                  <label className="wh-label">ชั้น</label>
                   <select
                     className="wh-select"
                     value={editItemForm.warehouse_bin_id}
@@ -690,7 +701,7 @@ export default function DepositPage() {
                   >
                     <option value="">— เลือกตำแหน่ง —</option>
                     {getRackBins(warehouseBins, editItemForm.warehouse_rack_id).map(bin => (
-                      <option key={bin.id} value={bin.id}>ชั้น {bin.shelfLevel} · พาเลต {bin.palletNumber}</option>
+                      <option key={bin.id} value={bin.id}>ชั้น {bin.shelfLevel}</option>
                     ))}
                   </select>
                 </div>
@@ -704,7 +715,7 @@ export default function DepositPage() {
                     warehouseRacks.find(rack => rack.id === editItemForm.warehouse_rack_id),
                     warehouseBins.find(bin => bin.id === editItemForm.warehouse_bin_id),
                   )}
-                  placeholder="เลือกโซน, Rack และชั้น/พาเลตให้ครบ"
+                  placeholder="เลือกโซน, Rack และชั้นให้ครบ"
                   readOnly
                 />
               </div>
@@ -864,13 +875,13 @@ export default function DepositPage() {
                                 {item.item_name}
                                 {item.item_code && <span className="wh-mono" style={{ fontSize: 10.5, fontWeight: 800, color: 'var(--sp-text3)', background: 'var(--sp-bg2)', padding: '1px 6px', borderRadius: 5 }}>{item.item_code}</span>}
                               </div>
-                              {item.detail && <div style={{ fontSize: 11, color: 'var(--sp-text3)' }}>{item.detail}</div>}
+                              {displayItemDetail(item.detail) && <div style={{ fontSize: 11, color: 'var(--sp-text3)' }}>{displayItemDetail(item.detail)}</div>}
                               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
                                 <div style={{ flex: 1, background: 'var(--sp-bg2)', borderRadius: 99, height: 4, overflow: 'hidden', maxWidth: 70 }}>
                                   <div style={{ width: `${pct}%`, height: '100%', background: isRet ? 'var(--sp-text3)' : 'linear-gradient(90deg,var(--sp-blue),var(--sp-blue-lt))', borderRadius: 99 }} />
                                 </div>
                                 <span style={{ fontSize: 11.5, fontWeight: 800, color: isRet ? 'var(--sp-text3)' : 'var(--sp-blue)', whiteSpace: 'nowrap' }}>{item.remaining_quantity}/{item.quantity} {item.unit}</span>
-                                {item.storage_location && <span style={{ fontSize: 11, color: 'var(--sp-text3)', whiteSpace: 'nowrap' }}>📍 {item.storage_location}</span>}
+                                {item.storage_location && <span style={{ fontSize: 11, color: 'var(--sp-text3)', whiteSpace: 'nowrap' }}>📍 {displayStorageLocation(item.storage_location)}</span>}
                               </div>
                             </div>
                             <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
