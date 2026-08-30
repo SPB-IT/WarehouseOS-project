@@ -517,10 +517,10 @@ export default function WarehouseMapCanvas({
                     height={zone.height}
                     fill={isDimmed || hasHighlightedSlot ? '#94a3b8' : zone.color}
                     opacity={isDimmed || hasHighlightedSlot ? 0.3 : isHighlighted ? 1 : 0.82}
-                    stroke={isHighlighted && !hasHighlightedSlot ? '#f4bd3f' : isSelected ? '#0e3060' : zone.color}
+                    stroke={isHighlighted && !hasHighlightedSlot ? '#e7b53d' : isSelected ? '#173f7a' : zone.color}
                     strokeWidth={isHighlighted && !hasHighlightedSlot ? 6 : isSelected ? 4 : 1}
                     cornerRadius={10}
-                    shadowColor={isHighlighted && !hasHighlightedSlot ? '#c8972a' : '#0e3060'}
+                    shadowColor={isHighlighted && !hasHighlightedSlot ? '#b84b2d' : '#173f7a'}
                     shadowBlur={isHighlighted && !hasHighlightedSlot ? 24 : isSelected ? 12 : 4}
                     shadowOpacity={isHighlighted && !hasHighlightedSlot ? 0.5 : isSelected ? 0.24 : 0.1}
                     shadowOffsetY={isHighlighted && !hasHighlightedSlot ? 6 : 3}
@@ -531,12 +531,12 @@ export default function WarehouseMapCanvas({
                       y={segmentY}
                       width={segmentWidth}
                       height={segmentHeight}
-                      fill={zone.color}
+                      fill="#a94329"
                       opacity={1}
-                      stroke="#f4bd3f"
+                      stroke="#e7b53d"
                       strokeWidth={5}
                       cornerRadius={6}
-                      shadowColor="#c8972a"
+                      shadowColor="#b84b2d"
                       shadowBlur={20}
                       shadowOpacity={0.55}
                     />
@@ -558,11 +558,11 @@ export default function WarehouseMapCanvas({
                         y={rackBadgeY}
                         width={30}
                         height={18}
-                        fill="#f4bd3f"
+                        fill="#e7b53d"
                         stroke="#ffffff"
                         strokeWidth={1.5}
                         cornerRadius={6}
-                        shadowColor="#0e3060"
+                        shadowColor="#173f7a"
                         shadowBlur={6}
                         shadowOpacity={0.22}
                       />
@@ -575,7 +575,7 @@ export default function WarehouseMapCanvas({
                         fontSize={10}
                         fontFamily="Sarabun, Arial"
                         fontStyle="bold"
-                        fill="#0e3060"
+                        fill="#173f7a"
                       />
                     </>
                   )}

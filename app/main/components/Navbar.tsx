@@ -117,10 +117,11 @@ export default function Navbar() {
       <style>{`
         .sp-nav {
           position: sticky; top: 0; z-index: 100;
-          background: linear-gradient(135deg, #0e3060 0%, #1a4f8a 60%, #1e6bbf 100%);
-          border-bottom: 2.5px solid #c8972a;
+          background: #fffdf8;
+          border-top: 4px solid var(--sp-navy);
+          border-bottom: 1px solid var(--sp-border);
           font-family: 'Sarabun', 'Noto Sans Thai', sans-serif;
-          box-shadow: 0 4px 20px rgba(14,48,96,0.35);
+          box-shadow: 0 4px 18px rgba(23,63,122,0.09);
         }
         .sp-nav-inner {
           max-width: 1320px; margin: 0 auto;
@@ -138,37 +139,37 @@ export default function Navbar() {
           box-shadow: 0 2px 10px rgba(200,151,42,0.45);
           flex-shrink: 0;
         }
-        .sp-logo-emblem svg { color: #0e3060; }
-        .sp-logo-text { font-size: 17px; font-weight: 800; color: #fff; letter-spacing: -0.3px; line-height: 1.1; }
-        .sp-logo-sub { font-size: 10.5px; color: rgba(255,255,255,0.55); letter-spacing: 0.8px; font-weight: 500; margin-top: 1px; }
+        .sp-logo-emblem svg { color: var(--sp-navy); }
+        .sp-logo-text { font-size: 17px; font-weight: 800; color: var(--sp-navy); letter-spacing: -0.3px; line-height: 1.1; }
+        .sp-logo-sub { font-size: 10.5px; color: var(--sp-text3); letter-spacing: 0.8px; font-weight: 500; margin-top: 1px; }
 
         .sp-navlinks { display: flex; gap: 2px; align-items: center; }
         .sp-navitem {
           display: flex; align-items: center; gap: 7px;
           padding: 7px 13px; border-radius: 8px;
           font-size: 13.5px; font-weight: 600;
-          color: rgba(255,255,255,0.65);
+          color: var(--sp-text3);
           text-decoration: none; transition: all 0.15s ease;
           white-space: nowrap; position: relative;
         }
         .sp-navitem:hover {
-          background: rgba(255,255,255,0.10);
-          color: #fff;
+          background: var(--sp-bg2);
+          color: var(--sp-navy);
         }
         .sp-navitem.active {
-          background: rgba(200,151,42,0.20);
-          color: #e2b84a;
-          border: 1px solid rgba(200,151,42,0.35);
+          background: #eaf3fd;
+          color: var(--sp-navy);
+          border: 1px solid #c9dcef;
         }
         .sp-navitem.active::after {
           content: '';
           position: absolute; bottom: -9px; left: 50%; transform: translateX(-50%);
           width: 4px; height: 4px; border-radius: 50%;
-          background: #c8972a;
+          background: var(--sp-orange);
         }
         .sp-nav-divider {
           width: 1px; height: 24px;
-          background: rgba(255,255,255,0.12);
+          background: var(--sp-border);
           margin: 0 4px;
         }
 
@@ -176,33 +177,40 @@ export default function Navbar() {
           display: flex; align-items: center; gap: 6px;
           padding: 6px 13px; border-radius: 8px;
           font-size: 13px; font-weight: 700; font-family: inherit;
-          background: rgba(200,151,42,0.15);
-          color: #e2b84a;
-          border: 1px solid rgba(200,151,42,0.30);
+          background: var(--sp-orange-bg);
+          color: var(--sp-orange-dark);
+          border: 1px solid #efcdbf;
           cursor: pointer; transition: all 0.15s;
           white-space: nowrap;
         }
         .sp-guide-btn:hover {
-          background: rgba(200,151,42,0.28);
-          border-color: rgba(200,151,42,0.55);
-          color: #f0cc6a;
+          background: #ffe4d8;
+          border-color: #e5a58c;
+          color: #87351f;
         }
+        .sp-ready {
+          display:flex; align-items:center; gap:6px;
+          padding:6px 9px; border:1px solid #c8e8d8; border-radius:99px;
+          background:#eaf8f1; color:#116c49;
+          font-size:10.5px; font-weight:700; white-space:nowrap;
+        }
+        .sp-ready-dot { width:7px; height:7px; border-radius:50%; background:#22a06b; box-shadow:0 0 0 3px rgba(34,160,107,.12); }
         .sp-account { display:flex; align-items:center; gap:7px; margin-left:5px; }
-        .sp-account-text { max-width:105px; overflow:hidden; text-overflow:ellipsis; color:rgba(255,255,255,.72); font-size:10.5px; line-height:1.2; }
-        .sp-signout { border:1px solid rgba(255,255,255,.22); background:rgba(255,255,255,.08); color:#fff; border-radius:7px; padding:6px 8px; cursor:pointer; font:700 11px inherit; }
-        .sp-signout:hover { background:rgba(255,255,255,.16); }
+        .sp-account-text { max-width:105px; overflow:hidden; text-overflow:ellipsis; color:var(--sp-text3); font-size:10.5px; line-height:1.2; }
+        .sp-signout { border:1px solid var(--sp-border); background:#fff; color:var(--sp-orange-dark); border-radius:7px; padding:6px 8px; cursor:pointer; font:700 11px inherit; }
+        .sp-signout:hover { background:var(--sp-orange-bg); border-color:#efcdbf; }
 
         .sp-hamburger {
           display: none; background: none; border: none;
-          color: rgba(255,255,255,0.8); cursor: pointer; padding: 6px;
+          color: var(--sp-navy); cursor: pointer; padding: 6px;
           border-radius: 6px; transition: all 0.15s;
         }
-        .sp-hamburger:hover { background: rgba(255,255,255,0.1); color: #fff; }
+        .sp-hamburger:hover { background: var(--sp-bg2); color: var(--sp-blue); }
 
         .sp-mobile-menu {
           display: none;
-          background: #0e3060;
-          border-top: 1px solid rgba(200,151,42,0.3);
+          background: #fffdf8;
+          border-top: 1px solid var(--sp-border);
           padding: 10px 1rem 16px;
           flex-direction: column; gap: 4px;
         }
@@ -211,21 +219,24 @@ export default function Navbar() {
           display: flex; align-items: center; gap: 10px;
           padding: 11px 14px; border-radius: 8px;
           font-size: 14.5px; font-weight: 600;
-          color: rgba(255,255,255,0.7);
+          color: var(--sp-text2);
           text-decoration: none; transition: all 0.15s;
         }
-        .sp-mobile-navitem:hover { background: rgba(255,255,255,0.08); color: #fff; }
-        .sp-mobile-navitem.active { background: rgba(200,151,42,0.2); color: #e2b84a; }
+        .sp-mobile-navitem:hover { background: var(--sp-bg2); color: var(--sp-navy); }
+        .sp-mobile-navitem.active { background: #eaf3fd; color: var(--sp-navy); }
         .sp-mobile-guide-btn {
           display: flex; align-items: center; gap: 10px;
           padding: 11px 14px; border-radius: 8px;
           font-size: 14px; font-weight: 700; font-family: inherit;
-          background: rgba(200,151,42,0.15);
-          color: #e2b84a; border: 1px solid rgba(200,151,42,0.25);
+          background: var(--sp-orange-bg);
+          color: var(--sp-orange-dark); border: 1px solid #efcdbf;
           cursor: pointer; margin-top: 4px; transition: all 0.15s;
         }
-        .sp-mobile-guide-btn:hover { background: rgba(200,151,42,0.25); }
+        .sp-mobile-guide-btn:hover { background: #ffe4d8; }
 
+        @media (max-width: 1180px) {
+          .sp-ready { display:none; }
+        }
         @media (max-width: 900px) {
           .sp-navlinks { display: none; }
           .sp-guide-btn { display: none; }
@@ -265,6 +276,7 @@ export default function Navbar() {
               </Fragment>
             ))}
             <div className="sp-nav-divider" />
+            <span className="sp-ready"><i className="sp-ready-dot" />ระบบพร้อมใช้งาน</span>
             <button className="sp-guide-btn" onClick={() => setShowGuide(true)}>
               <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
                 <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
