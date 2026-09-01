@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Navbar from './components/Navbar';
+import AutomaticBackupManager from './components/AutomaticBackupManager';
 
 export const metadata: Metadata = {
   title: 'WarehouseOS — ระบบจัดการคลังสินค้า',
@@ -12,6 +13,7 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   return (
     <>
       <Navbar />
+      <AutomaticBackupManager />
       <main>{children}</main>
     </>
   );

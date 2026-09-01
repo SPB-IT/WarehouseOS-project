@@ -7,6 +7,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "backup:local": "node scripts/backup-local.mjs",
+    "backup:install": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-local-backup-task.ps1",
     "lint": "eslint",
     "typecheck": "tsc --noEmit --incremental false",
     "test": "node --experimental-strip-types --test tests/*.test.ts",

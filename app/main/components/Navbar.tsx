@@ -94,6 +94,16 @@ const navItems = [
 const primaryNavItems = navItems.slice(0, 2);
 const warehouseNavItems = [navItems[2], navItems[3], navItems[5], navItems[6]];
 const mapNavItem = navItems[4];
+const backupNavItem = {
+  href: '/main/backup',
+  label: 'สำรองข้อมูล',
+  description: 'ดาวน์โหลดและกู้คืนข้อมูลคลัง',
+  icon: (
+    <svg width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+      <path d="M4 5v5h5"/><path d="M5.5 9a8 8 0 1 1-.8 6"/><path d="M12 8v8m0 0 3-3m-3 3-3-3"/>
+    </svg>
+  ),
+};
 
 export default function Navbar() {
   const pathname = usePathname();
@@ -140,7 +150,7 @@ export default function Navbar() {
   }, []);
 
   const warehouseMenuActive = warehouseNavItems.some((item) => item.href === pathname);
-  const manageMenuActive = pathname === mapNavItem.href || showGuide;
+  const manageMenuActive = pathname === mapNavItem.href || pathname === backupNavItem.href || showGuide;
 
   const signOut = async () => {
     await supabase.auth.signOut();
@@ -434,6 +444,18 @@ export default function Navbar() {
                     <small>{mapNavItem.description}</small>
                   </span>
                 </Link>
+                <Link
+                  href={backupNavItem.href}
+                  role="menuitem"
+                  className={`sp-dropdown-link${pathname === backupNavItem.href ? ' active' : ''}`}
+                  onClick={() => setOpenDropdown(null)}
+                >
+                  <span className="sp-dropdown-icon">{backupNavItem.icon}</span>
+                  <span className="sp-dropdown-copy">
+                    <strong>{backupNavItem.label}</strong>
+                    <small>{backupNavItem.description}</small>
+                  </span>
+                </Link>
                 <div className="sp-dropdown-separator" />
                 <button
                   type="button"
@@ -517,6 +539,12 @@ export default function Navbar() {
                 onClick={() => setMenuOpen(false)}>
                 {mapNavItem.icon}
                 {mapNavItem.label}
+              </Link>
+              <Link href={backupNavItem.href}
+                className={`sp-mobile-navitem${pathname === backupNavItem.href ? ' active' : ''}`}
+                onClick={() => setMenuOpen(false)}>
+                {backupNavItem.icon}
+                {backupNavItem.label}
               </Link>
               <button className="sp-mobile-guide-btn" onClick={() => { setShowGuide(true); setMenuOpen(false); }}>
                 <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2.2" viewBox="0 0 24 24">
