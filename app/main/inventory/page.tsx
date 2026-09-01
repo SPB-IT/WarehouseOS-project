@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
+import { isSupabasePermissionDenied } from '../../../lib/supabaseErrors';
 import { fetchAllSupabaseRows } from '../../../lib/supabasePagination';
 import { displayItemDetail, displayStorageLocation } from '../../../lib/warehouseLocation';
 import type { DepositItem, Withdrawal } from '../../../types/warehouse';
@@ -218,7 +219,7 @@ export default function InventoryPage() {
         return { data: pageRows as unknown as DepositItem[], error };
       });
     } catch (error) {
-      console.error('[inventory summary] fetch failed:', error);
+      if (!isSupabasePermissionDenied(error)) console.error('[inventory summary] fetch failed:', error);
       setSummaryItems([]);
       setSummaryLoading(false);
       return;

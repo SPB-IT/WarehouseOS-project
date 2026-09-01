@@ -13,6 +13,63 @@ export const WAREHOUSE_ZONE_COLORS = [
   '#586b84',
 ];
 
+export const WAREHOUSE_AISLE_CODE_PREFIX = 'AISLE-';
+
+export const DEFAULT_WAREHOUSE_AISLES: WarehouseZone[] = [
+  {
+    id: 'reference-aisle-1',
+    name: 'ทางเดิน',
+    locationCode: 'AISLE-01',
+    floor: 'ทางเดิน',
+    posX: 120,
+    posY: 160,
+    width: 90,
+    height: 400,
+    color: '#8aa0ba',
+    rackLevels: 1,
+    palletsPerLevel: 1,
+  },
+  {
+    id: 'reference-aisle-2',
+    name: 'ทางเดิน',
+    locationCode: 'AISLE-02',
+    floor: 'ทางเดิน',
+    posX: 330,
+    posY: 160,
+    width: 90,
+    height: 400,
+    color: '#8aa0ba',
+    rackLevels: 1,
+    palletsPerLevel: 1,
+  },
+  {
+    id: 'reference-aisle-3',
+    name: 'ทางเดิน',
+    locationCode: 'AISLE-03',
+    floor: 'ทางเดิน',
+    posX: 540,
+    posY: 160,
+    width: 90,
+    height: 400,
+    color: '#8aa0ba',
+    rackLevels: 1,
+    palletsPerLevel: 1,
+  },
+  {
+    id: 'reference-aisle-4',
+    name: 'ทางเดิน',
+    locationCode: 'AISLE-04',
+    floor: 'ทางเดิน',
+    posX: 750,
+    posY: 160,
+    width: 90,
+    height: 400,
+    color: '#8aa0ba',
+    rackLevels: 1,
+    palletsPerLevel: 1,
+  },
+];
+
 export const DEFAULT_WAREHOUSE_ZONES: WarehouseZone[] = [
   {
     id: 'reference-s',
@@ -52,7 +109,7 @@ export const DEFAULT_WAREHOUSE_ZONES: WarehouseZone[] = [
     name: 'ทั่วไป / เครื่องครัว',
     locationCode: 'F',
     floor: '4 ชั้น',
-    posX: 240,
+    posX: 210,
     posY: 180,
     width: 60,
     height: 340,
@@ -63,7 +120,7 @@ export const DEFAULT_WAREHOUSE_ZONES: WarehouseZone[] = [
     name: 'เบ็ดเตล็ด',
     locationCode: 'E',
     floor: '4 ชั้น',
-    posX: 300,
+    posX: 270,
     posY: 180,
     width: 60,
     height: 340,
@@ -74,7 +131,7 @@ export const DEFAULT_WAREHOUSE_ZONES: WarehouseZone[] = [
     name: 'เบ็ดเตล็ด',
     locationCode: 'D',
     floor: '4 ชั้น',
-    posX: 460,
+    posX: 420,
     posY: 180,
     width: 60,
     height: 340,
@@ -85,7 +142,7 @@ export const DEFAULT_WAREHOUSE_ZONES: WarehouseZone[] = [
     name: 'อุปกรณ์กีฬา / เบ็ดเตล็ด',
     locationCode: 'C',
     floor: '4 ชั้น',
-    posX: 520,
+    posX: 480,
     posY: 180,
     width: 60,
     height: 340,
@@ -96,7 +153,7 @@ export const DEFAULT_WAREHOUSE_ZONES: WarehouseZone[] = [
     name: 'ของเล่น',
     locationCode: 'B',
     floor: '4 ชั้น',
-    posX: 680,
+    posX: 630,
     posY: 180,
     width: 60,
     height: 340,
@@ -107,7 +164,7 @@ export const DEFAULT_WAREHOUSE_ZONES: WarehouseZone[] = [
     name: 'ของเล่น',
     locationCode: 'A',
     floor: '4 ชั้น',
-    posX: 740,
+    posX: 690,
     posY: 180,
     width: 60,
     height: 340,
@@ -136,6 +193,19 @@ export const DEFAULT_WAREHOUSE_ZONES: WarehouseZone[] = [
     color: '#c84f8c',
   },
 ];
+
+export function isWarehouseAisle(zone: Pick<WarehouseZone, 'locationCode'>) {
+  return zone.locationCode.toUpperCase().startsWith(WAREHOUSE_AISLE_CODE_PREFIX);
+}
+
+export function cloneDefaultWarehouseAisles() {
+  return DEFAULT_WAREHOUSE_AISLES.map((aisle) => ({ ...aisle }));
+}
+
+export function withDefaultWarehouseAisles(zones: WarehouseZone[]) {
+  if (zones.some(isWarehouseAisle)) return zones;
+  return [...zones, ...cloneDefaultWarehouseAisles()];
+}
 
 const LEGACY_LOCATION_BY_ID: Record<string, Pick<WarehouseZone, 'locationCode' | 'floor'>> = {
   'sample-a': { locationCode: 'A5', floor: 'ชั้น 2' },
@@ -195,11 +265,13 @@ function normalizeZone(value: unknown): WarehouseZone | null {
 }
 
 export function cloneDefaultWarehouseZones() {
-  return DEFAULT_WAREHOUSE_ZONES.map((zone) => ({
-    ...zone,
-    rackLevels: zone.rackLevels ?? 4,
-    palletsPerLevel: 1,
-  }));
+  return withDefaultWarehouseAisles(
+    DEFAULT_WAREHOUSE_ZONES.map((zone) => ({
+      ...zone,
+      rackLevels: zone.rackLevels ?? 4,
+      palletsPerLevel: 1,
+    })),
+  );
 }
 
 function getReferenceLayoutKey(zone: WarehouseZone) {
@@ -210,7 +282,7 @@ function getReferenceLayoutKey(zone: WarehouseZone) {
 }
 
 const REFERENCE_LAYOUT = new Map(
-  DEFAULT_WAREHOUSE_ZONES.map((zone) => [
+  [...DEFAULT_WAREHOUSE_ZONES, ...DEFAULT_WAREHOUSE_AISLES].map((zone) => [
     getReferenceLayoutKey(zone),
     {
       posX: zone.posX,
@@ -245,7 +317,8 @@ export function loadWarehouseZones() {
   try {
     const saved = window.localStorage.getItem(WAREHOUSE_MAP_STORAGE_KEY);
     if (!saved) return cloneDefaultWarehouseZones();
-    return parseWarehouseZones(JSON.parse(saved)) ?? cloneDefaultWarehouseZones();
+    const parsed = parseWarehouseZones(JSON.parse(saved));
+    return parsed ? withDefaultWarehouseAisles(parsed) : cloneDefaultWarehouseZones();
   } catch {
     return cloneDefaultWarehouseZones();
   }
@@ -284,6 +357,7 @@ export function zoneMatchesStorageLocation(
   zone: WarehouseZone,
   storageLocation: string | null | undefined,
 ) {
+  if (isWarehouseAisle(zone)) return false;
   if (!storageLocation?.trim()) return false;
 
   const normalizedLocation = normalizeLocationText(storageLocation);

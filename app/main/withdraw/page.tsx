@@ -2,6 +2,7 @@
 import { useCallback, useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { supabase } from '../../../lib/supabase';
+import { isSupabasePermissionDenied } from '../../../lib/supabaseErrors';
 import { fetchAllSupabaseRows } from '../../../lib/supabasePagination';
 import { displayStorageLocation } from '../../../lib/warehouseLocation';
 import type { Deposit, DepositItem } from '../../../types/warehouse';
@@ -23,6 +24,7 @@ function ReturnItemFormInner() {
   const [staffName, setStaffName] = useState('');
   const [remark, setRemark] = useState('');
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
   const [allDeposits, setAllDeposits] = useState<Deposit[]>([]);
   const [selectedItems, setSelectedItems] = useState<Record<number, WithdrawRow>>({});
   const [returnQuantities, setReturnQuantities] = useState<Record<number, number>>({});
@@ -36,6 +38,7 @@ function ReturnItemFormInner() {
 
   const loadInventoryItems = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const data = await fetchAllSupabaseRows<Deposit>(async (from, to) => {
         const { data: pageRows, error } = await supabase
@@ -46,10 +49,15 @@ function ReturnItemFormInner() {
       });
       setAllDeposits(data);
     } catch (error) {
-      console.error('[withdraw] fetch failed:', error);
+      const permissionDenied = isSupabasePermissionDenied(error);
+      if (!permissionDenied) console.error('[withdraw] fetch failed:', error);
+      setLoadError(permissionDenied
+        ? 'ยังไม่มีสิทธิ์อ่านข้อมูลคลังจาก Supabase'
+        : 'โหลดรายการสินค้าที่รอคืนไม่สำเร็จ');
       setAllDeposits([]);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [sortBy]);
 
   useEffect(() => { void loadInventoryItems(); }, [loadInventoryItems]);
@@ -370,7 +378,7 @@ function ReturnItemFormInner() {
             </thead>
             <tbody>
               {displayedRows.length === 0 ? (
-                <tr><td colSpan={7} className="wh-empty-row">ไม่พบรายการสินค้าที่รอการคืน</td></tr>
+                <tr><td colSpan={7} className="wh-empty-row">{loading ? 'กำลังโหลดข้อมูล...' : loadError || 'ไม่พบรายการสินค้าที่รอการคืน'}</td></tr>
               ) : displayedRows.map((row: WithdrawRow) => {
                 const isSel = !!selectedItems[row.id];
                 return (

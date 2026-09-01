@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '../../../lib/supabase';
+import { isSupabasePermissionDenied } from '../../../lib/supabaseErrors';
 import { fetchAllSupabaseRows } from '../../../lib/supabasePagination';
 import type { DashboardStats, Withdrawal } from '../../../types/warehouse';
 
@@ -63,7 +64,7 @@ export default function MainPage() {
       setStats(nextStats);
       if (recentW) setRecentWithdrawals(recentW as Withdrawal[]);
     } catch (e) { 
-      console.error(e); 
+      if (!isSupabasePermissionDenied(e)) console.error(e);
     } finally { 
       if (isMounted()) setLoading(false); 
     }

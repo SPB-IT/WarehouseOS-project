@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { supabase } from '../../../lib/supabase';
+import { isSupabasePermissionDenied } from '../../../lib/supabaseErrors';
 import { fetchAllSupabaseRows } from '../../../lib/supabasePagination';
 import type { Withdrawal } from '../../../types/warehouse';
 
@@ -39,7 +40,7 @@ export default function HistoryPage() {
       });
       setRows(data);
     } catch (error) {
-      console.error('[history] fetch failed:', error);
+      if (!isSupabasePermissionDenied(error)) console.error('[history] fetch failed:', error);
       setRows([]);
     } finally {
       setLoading(false);

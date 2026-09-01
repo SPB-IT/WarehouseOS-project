@@ -1,9 +1,14 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Group, Layer, Line, Rect, Stage, Text, Transformer } from 'react-konva';
-import type Konva from 'konva';
+import Konva from 'konva';
 import type { WarehouseZone, ZonePositionUpdate } from './types';
+import { isWarehouseAisle, withDefaultWarehouseAisles } from './warehouseMapData';
+
+if (typeof window !== 'undefined') {
+  Konva.pixelRatio = Math.min(Math.max(window.devicePixelRatio || 1, 2), 3);
+}
 
 interface WarehouseMapCanvasProps {
   zones: WarehouseZone[];
@@ -78,6 +83,7 @@ export default function WarehouseMapCanvas({
   const [scale, setScale] = useState(1);
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
   const [stageSize, setStageSize] = useState({ width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
+  const [viewportReady, setViewportReady] = useState(!readOnly);
   const [selectionBox, setSelectionBox] = useState<{
     x1: number;
     y1: number;
@@ -91,6 +97,8 @@ export default function WarehouseMapCanvas({
   const isSelecting = useRef(false);
   const draggedZoneStart = useRef<{ x: number; y: number } | null>(null);
   const dragStartPositions = useRef<Record<string, { x: number; y: number }>>({});
+  const renderedZones = [...(readOnly ? withDefaultWarehouseAisles(zones) : zones)]
+    .sort((left, right) => Number(!isWarehouseAisle(left)) - Number(!isWarehouseAisle(right)));
 
   useEffect(() => {
     const transformer = transformerRef.current;
@@ -109,9 +117,10 @@ export default function WarehouseMapCanvas({
     transformer.getLayer()?.batchDraw();
   }, [readOnly, selectedIds, zones]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!readOnly || !scrollRef.current) return;
     const container = scrollRef.current;
+    let fitFrame = 0;
 
     const fitToContainer = () => {
       const width = Math.max(container.clientWidth, 320);
@@ -123,13 +132,19 @@ export default function WarehouseMapCanvas({
         x: Math.max((width - CANVAS_WIDTH * nextScale) / 2, 0),
         y: Math.max((height - CANVAS_HEIGHT * nextScale) / 2, 0),
       });
+      setViewportReady(true);
     };
 
-    const frame = window.requestAnimationFrame(fitToContainer);
-    const observer = new ResizeObserver(fitToContainer);
+    const scheduleFit = () => {
+      window.cancelAnimationFrame(fitFrame);
+      fitFrame = window.requestAnimationFrame(fitToContainer);
+    };
+
+    scheduleFit();
+    const observer = new ResizeObserver(scheduleFit);
     observer.observe(container);
     return () => {
-      window.cancelAnimationFrame(frame);
+      window.cancelAnimationFrame(fitFrame);
       observer.disconnect();
     };
   }, [readOnly]);
@@ -257,8 +272,15 @@ export default function WarehouseMapCanvas({
   }
 
   return (
-    <div className="wm-canvas-shell">
-      <div className="wm-zoom-controls" aria-label="ควบคุมการซูม" style={{ right: 14 }}>
+    <div
+      className="wm-canvas-shell"
+      style={readOnly ? { position: 'relative', width: '100%', height: '100%', minHeight: 0 } : undefined}
+    >
+      <div
+        className="wm-zoom-controls"
+        aria-label="ควบคุมการซูม"
+        style={{ position: 'absolute', top: 14, right: 14, zIndex: 10, display: 'flex', gap: 6 }}
+      >
         <button
           type="button"
           onClick={() => setScale((current) => Math.min(current * 1.2, 2.5))}
@@ -278,7 +300,12 @@ export default function WarehouseMapCanvas({
         </button>
       </div>
 
-      <div ref={scrollRef} className="wm-canvas-scroll">
+      <div
+        ref={scrollRef}
+        className="wm-canvas-scroll"
+        style={readOnly ? { width: '100%', height: '100%', minHeight: 0, overflow: 'hidden' } : undefined}
+      >
+        <div style={{ display: readOnly && !viewportReady ? 'none' : 'block' }}>
         <Stage
           width={readOnly ? stageSize.width : CANVAS_WIDTH}
           height={readOnly ? stageSize.height : CANVAS_HEIGHT}
@@ -313,35 +340,6 @@ export default function WarehouseMapCanvas({
             <Line points={[48, 652, 532, 652]} stroke="#cad5e2" strokeWidth={1} />
             <Line points={[708, 652, 912, 652]} stroke="#cad5e2" strokeWidth={1} />
 
-            {[
-              { x: 130, width: 100, text: 'ทางเดินหลัก' },
-              { x: 365, width: 90, text: 'ทางเดิน' },
-              { x: 585, width: 90, text: 'ทางเดิน' },
-              { x: 800, width: 40, text: '' },
-            ].map((aisle, index) => (
-              <Group key={`aisle-${index}`}>
-                <Line
-                  points={[aisle.x + aisle.width / 2, 170, aisle.x + aisle.width / 2, 545]}
-                  stroke="#a9bad0"
-                  strokeWidth={1}
-                  dash={[5, 7]}
-                  opacity={0.62}
-                />
-                {aisle.text && (
-                  <Text
-                    text={aisle.text}
-                    x={aisle.x}
-                    y={536}
-                    width={aisle.width}
-                    align="center"
-                    fontSize={10}
-                    fontFamily="Sarabun, Arial"
-                    fill="#6f819a"
-                  />
-                )}
-              </Group>
-            ))}
-
             <Text
               text="▲"
               x={585}
@@ -368,10 +366,11 @@ export default function WarehouseMapCanvas({
           </Layer>
 
           <Layer>
-            {zones.map((zone) => {
+            {renderedZones.map((zone) => {
               const isSelected = selectedIds.includes(zone.id);
               const isHighlighted = highlightedIds.includes(zone.id);
-              const isDimmed = dimUnhighlighted && !isHighlighted;
+              const isAisle = isWarehouseAisle(zone);
+              const isDimmed = !isAisle && dimUnhighlighted && !isHighlighted;
               const locationLabel = [zone.locationCode, zone.floor].filter(Boolean).join(' · ');
               const isVertical = zone.height > zone.width * 2;
               const isRack = /^[A-F]$/.test(zone.locationCode) && zone.floor.includes('4');
@@ -426,6 +425,12 @@ export default function WarehouseMapCanvas({
                     event.cancelBubble = true;
                     if (readOnly) return;
                     onEdit(zone.id);
+                  }}
+                  onMouseLeave={(event) => {
+                    if (!readOnly || !onSlotHover) return;
+                    const stage = event.target.getStage();
+                    if (stage) stage.container().style.cursor = 'default';
+                    onSlotHover(null);
                   }}
                   onDragStart={() => {
                     if (readOnly) return;
@@ -515,17 +520,29 @@ export default function WarehouseMapCanvas({
                   <Rect
                     width={zone.width}
                     height={zone.height}
-                    fill={isDimmed || hasHighlightedSlot ? '#94a3b8' : zone.color}
-                    opacity={isDimmed || hasHighlightedSlot ? 0.3 : isHighlighted ? 1 : 0.82}
-                    stroke={isHighlighted && !hasHighlightedSlot ? '#e7b53d' : isSelected ? '#173f7a' : zone.color}
-                    strokeWidth={isHighlighted && !hasHighlightedSlot ? 6 : isSelected ? 4 : 1}
-                    cornerRadius={10}
+                    fill={isAisle ? readOnly ? 'rgba(255,255,255,0.001)' : '#edf3f8' : isDimmed || hasHighlightedSlot ? '#94a3b8' : zone.color}
+                    opacity={isAisle ? readOnly ? 1 : 0.88 : isDimmed || hasHighlightedSlot ? 0.3 : isHighlighted ? 1 : 0.94}
+                    stroke={isAisle ? readOnly ? 'rgba(138,160,186,.16)' : isSelected ? '#173f7a' : zone.color : isHighlighted && !hasHighlightedSlot ? '#e7b53d' : isSelected ? '#173f7a' : zone.color}
+                    strokeWidth={isAisle ? readOnly ? 0.5 : isSelected ? 3 : 1.5 : isHighlighted && !hasHighlightedSlot ? 6 : isSelected ? 4 : 1.25}
+                    dash={isAisle && !readOnly ? [8, 6] : undefined}
+                    cornerRadius={isAisle ? 7 : 10}
                     shadowColor={isHighlighted && !hasHighlightedSlot ? '#b84b2d' : '#173f7a'}
-                    shadowBlur={isHighlighted && !hasHighlightedSlot ? 24 : isSelected ? 12 : 4}
-                    shadowOpacity={isHighlighted && !hasHighlightedSlot ? 0.5 : isSelected ? 0.24 : 0.1}
-                    shadowOffsetY={isHighlighted && !hasHighlightedSlot ? 6 : 3}
+                    shadowBlur={isAisle ? isSelected ? 8 : 0 : isHighlighted && !hasHighlightedSlot ? 24 : isSelected ? 12 : 4}
+                    shadowOpacity={isAisle ? isSelected ? 0.18 : 0 : isHighlighted && !hasHighlightedSlot ? 0.5 : isSelected ? 0.24 : 0.1}
+                    shadowOffsetY={isAisle ? 0 : isHighlighted && !hasHighlightedSlot ? 6 : 3}
                   />
-                  {hasHighlightedSlot && (
+                  {isAisle && (
+                    <Line
+                      points={isVertical
+                        ? [zone.width / 2, 10, zone.width / 2, zone.height - 10]
+                        : [10, zone.height / 2, zone.width - 10, zone.height / 2]}
+                      stroke={zone.color}
+                      strokeWidth={1.2}
+                      dash={[5, 7]}
+                      opacity={readOnly ? 0.28 : 0.72}
+                    />
+                  )}
+                  {!isAisle && hasHighlightedSlot && (
                     <Rect
                       x={segmentX}
                       y={segmentY}
@@ -541,17 +558,17 @@ export default function WarehouseMapCanvas({
                       shadowOpacity={0.55}
                     />
                   )}
-                  {slotCount > 1 && Array.from({ length: slotCount - 1 }, (_, index) => index + 1).map((slot) => (
+                  {!isAisle && slotCount > 1 && Array.from({ length: slotCount - 1 }, (_, index) => index + 1).map((slot) => (
                     <Line
                       key={`slot-${slot}`}
                       points={isVertical
                         ? [0, zone.height * slot / slotCount, zone.width, zone.height * slot / slotCount]
                         : [zone.width * slot / slotCount, 0, zone.width * slot / slotCount, zone.height]}
                       stroke="rgba(255,255,255,.72)"
-                      strokeWidth={1.5}
+                      strokeWidth={1.25}
                     />
                   ))}
-                  {hasHighlightedSlot && (
+                  {!isAisle && hasHighlightedSlot && (
                     <>
                       <Rect
                         x={rackBadgeX}
@@ -579,13 +596,57 @@ export default function WarehouseMapCanvas({
                       />
                     </>
                   )}
-                  {isVertical ? (
+                  {isAisle ? (
+                    readOnly ? (
+                      <Text
+                        text="ทางเดิน"
+                        x={4}
+                        y={Math.max(zone.height - 18, 3)}
+                        width={Math.max(zone.width - 8, 24)}
+                        align="center"
+                        fontSize={9}
+                        fontFamily="Sarabun, Arial"
+                        fill="#71849b"
+                        ellipsis
+                        wrap="none"
+                      />
+                    ) : isVertical ? (
+                      <Text
+                        text={zone.name || 'ทางเดิน'}
+                        x={Math.max((zone.width - 16) / 2, 4)}
+                        y={zone.height - 12}
+                        width={Math.max(zone.height - 24, 30)}
+                        fontSize={11}
+                        fontFamily="Sarabun, Arial"
+                        fontStyle="bold"
+                        fill="#60758f"
+                        align="center"
+                        rotation={-90}
+                        ellipsis
+                        wrap="none"
+                      />
+                    ) : (
+                      <Text
+                        text={zone.name || 'ทางเดิน'}
+                        x={8}
+                        y={Math.max((zone.height - 14) / 2, 3)}
+                        width={Math.max(zone.width - 16, 24)}
+                        align="center"
+                        fontSize={11}
+                        fontFamily="Sarabun, Arial"
+                        fontStyle="bold"
+                        fill="#60758f"
+                        ellipsis
+                        wrap="none"
+                      />
+                    )
+                  ) : isVertical ? (
                     <Text
                       text={`${zone.locationCode} · ${zone.name}`}
                       x={Math.max((zone.width - 16) / 2, 4)}
                       y={zone.height - 12}
                       width={Math.max(zone.height - 24, 30)}
-                      fontSize={isRack ? 13 : 12}
+                      fontSize={isRack ? 15 : 14}
                       fontFamily="Sarabun, Arial"
                       fontStyle="bold"
                       fill="#ffffff"
@@ -601,7 +662,7 @@ export default function WarehouseMapCanvas({
                         x={12}
                         y={10}
                         width={Math.max(zone.width - 24, 20)}
-                        fontSize={zone.height <= 70 ? 13 : 16}
+                        fontSize={zone.height <= 70 ? 15 : 17}
                         fontFamily="Sarabun, Arial"
                         fontStyle="bold"
                         fill="#ffffff"
@@ -612,13 +673,13 @@ export default function WarehouseMapCanvas({
                         text={locationLabel || `${Math.round(zone.width)} × ${Math.round(zone.height)}`}
                         x={12}
                         y={zone.height <= 70 ? 32 : 36}
-                        fontSize={10.5}
+                        fontSize={11.5}
                         fontFamily="Sarabun, Arial"
                         fill="rgba(255,255,255,0.82)"
                       />
                     </>
                   )}
-                  {readOnly && onSlotHover && slotCount >= 1 && Array.from(
+                  {!isAisle && readOnly && onSlotHover && slotCount >= 1 && Array.from(
                     { length: slotCount },
                     (_, index) => index + 1,
                   ).map((slotNumber) => {
@@ -649,11 +710,6 @@ export default function WarehouseMapCanvas({
                             clientX: event.evt.clientX,
                             clientY: event.evt.clientY,
                           });
-                        }}
-                        onMouseLeave={(event) => {
-                          const stage = event.target.getStage();
-                          if (stage) stage.container().style.cursor = 'default';
-                          onSlotHover(null);
                         }}
                       />
                     );
@@ -690,7 +746,24 @@ export default function WarehouseMapCanvas({
             )}
           </Layer>
         </Stage>
+        </div>
       </div>
+      <style jsx>{`
+        .wm-zoom-controls button {
+          min-width: 34px;
+          height: 34px;
+          padding: 0 10px;
+          border: 1px solid var(--sp-border);
+          border-radius: 8px;
+          background: rgba(255,255,255,.95);
+          color: var(--sp-navy);
+          font: 700 14px 'Sarabun', sans-serif;
+          cursor: pointer;
+          box-shadow: 0 3px 10px rgba(14,48,96,.12);
+        }
+        .wm-zoom-controls button:hover { border-color: var(--sp-blue-md); background: #fff; }
+        .wm-zoom-controls .wm-reset-view { font-size: 11px; }
+      `}</style>
     </div>
   );
 }

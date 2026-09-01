@@ -2,7 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { displayItemDetail, displayStorageLocation } from '../../lib/warehouseLocation';
 import type { WarehouseZone } from './warehouse-map/types';
@@ -97,6 +97,29 @@ interface RackProductSection {
   products: RackProductGroup[];
 }
 
+const SUPABASE_UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function describeRackPreviewError(error: unknown) {
+  const record = error && typeof error === 'object'
+    ? error as { code?: unknown; message?: unknown }
+    : null;
+  const code = typeof record?.code === 'string' ? record.code : '';
+  const message = typeof record?.message === 'string'
+    ? record.message
+    : error instanceof Error
+      ? error.message
+      : '';
+  const permissionDenied = code === '42501' || message.toLowerCase().includes('permission denied');
+
+  return {
+    expected: permissionDenied,
+    logMessage: message || code || 'Unknown rack preview error',
+    userMessage: permissionDenied
+      ? 'กรุณาเข้าสู่ระบบเพื่อดูสินค้าใน Rack'
+      : 'โหลดสินค้าใน Rack ไม่สำเร็จ',
+  };
+}
+
 function extractShelfLevel(location: string | null | undefined) {
   return Number(location?.match(/ชั้น\s*(\d+)/)?.[1] ?? 0);
 }
@@ -164,6 +187,7 @@ function Icon({ children, size = 18 }: { children: React.ReactNode; size?: numbe
 export default function WarehousePreviewPage() {
   const [zones, setZones] = useState<WarehouseZone[]>([]);
   const [rackCounts, setRackCounts] = useState<Record<string, number>>({});
+  const [mapReady, setMapReady] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [results, setResults] = useState<ProductSearchResult[]>([]);
@@ -178,8 +202,10 @@ export default function WarehousePreviewPage() {
   const [viewingRackProduct, setViewingRackProduct] = useState<RackProductGroup | null>(null);
   const [searchRefreshToken, setSearchRefreshToken] = useState(0);
   const [rackRefreshToken, setRackRefreshToken] = useState(0);
-  const [rackSyncStatus, setRackSyncStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
+  const [rackSyncStatus, setRackSyncStatus] = useState<'connecting' | 'live' | 'demo' | 'error'>('connecting');
   const [lastRackSync, setLastRackSync] = useState<Date | null>(null);
+  const [displayMode, setDisplayMode] = useState(false);
+  const [displayTime, setDisplayTime] = useState<Date | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const rackPreviewCache = useRef(new Map<string, {
     cachedAt: number;
@@ -188,6 +214,31 @@ export default function WarehousePreviewPage() {
     rackId?: string;
     binCapacity: number;
   }>());
+
+  const setWarehouseDisplayMode = useCallback((enabled: boolean) => {
+    setDisplayMode(enabled);
+    document.body.classList.toggle('warehouse-display-mode', enabled);
+
+    const url = new URL(window.location.href);
+    if (enabled) url.searchParams.set('display', '1');
+    else url.searchParams.delete('display');
+    window.history.replaceState(window.history.state, '', url);
+  }, []);
+
+  useEffect(() => {
+    const enabled = new URLSearchParams(window.location.search).get('display') === '1';
+    setDisplayMode(enabled);
+    document.body.classList.toggle('warehouse-display-mode', enabled);
+
+    return () => document.body.classList.remove('warehouse-display-mode');
+  }, []);
+
+  useEffect(() => {
+    if (!displayMode) return;
+    setDisplayTime(new Date());
+    const timer = window.setInterval(() => setDisplayTime(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, [displayMode]);
 
   useEffect(() => {
     let active = true;
@@ -203,9 +254,14 @@ export default function WarehousePreviewPage() {
         if (active) {
           setZones(remoteZones);
           setRackCounts(remoteRackCounts);
+          setMapReady(true);
         }
       } catch {
-        if (active) setZones(loadWarehouseZones());
+        if (active) {
+          setZones(loadWarehouseZones());
+          setRackCounts({});
+          setMapReady(true);
+        }
       }
     };
 
@@ -318,6 +374,19 @@ export default function WarehousePreviewPage() {
 
       setRackSyncStatus('connecting');
       setRackPreview({ key, loading: true, count: 0, items: [], binCapacity: 4 });
+      if (!SUPABASE_UUID_PATTERN.test(hoveredZoneId)) {
+        setRackSyncStatus('demo');
+        setRackPreview({
+          key,
+          loading: false,
+          count: 0,
+          items: [],
+          binCapacity: 4,
+          error: 'ผังนี้เป็นข้อมูลสำรอง จึงไม่มีข้อมูลสินค้าใน Rack',
+        });
+        return;
+      }
+
       const racks = await fetchWarehouseRacks(hoveredZoneId);
       const rack = racks.find((candidate) => candidate.rackNumber === hoveredSlotNumber);
       const bins = rack ? await fetchWarehouseBins(rack.id) : [];
@@ -338,7 +407,8 @@ export default function WarehousePreviewPage() {
 
       if (cancelled) return;
       if (response.error) {
-        console.error('Rack preview query failed:', response.error.message);
+        const failure = describeRackPreviewError(response.error);
+        if (!failure.expected) console.warn('Rack preview query failed:', failure.logMessage);
         setRackSyncStatus('error');
         setRackPreview({
           key,
@@ -347,7 +417,7 @@ export default function WarehousePreviewPage() {
           items: [],
           rackId: rack?.id,
           binCapacity: shelfCapacity || 4,
-          error: 'โหลดสินค้าใน Rack ไม่สำเร็จ',
+          error: failure.userMessage,
         });
         return;
       }
@@ -369,7 +439,8 @@ export default function WarehousePreviewPage() {
 
     void loadRackProducts().catch((error: unknown) => {
       if (cancelled) return;
-      console.error('Rack preview load failed:', error);
+      const failure = describeRackPreviewError(error);
+      if (!failure.expected) console.warn('Rack preview load failed:', failure.logMessage);
       setRackSyncStatus('error');
       setRackPreview({
         key,
@@ -377,7 +448,7 @@ export default function WarehousePreviewPage() {
         count: 0,
         items: [],
         binCapacity: 4,
-        error: 'โหลดสินค้าใน Rack ไม่สำเร็จ',
+        error: failure.userMessage,
       });
     });
     return () => {
@@ -464,6 +535,7 @@ export default function WarehousePreviewPage() {
     ? { [hoveredRack.zoneId]: hoveredRack.slotNumber }
     : highlightedSlots;
   const previewDimUnhighlighted = Boolean(hoveredRack || selectedItem);
+  const displaySideOpen = displayMode && Boolean(isSearching || loading || searchError || hoveredRack || selectedItem);
 
   const clearSearch = () => {
     setLockedRack(null);
@@ -490,25 +562,40 @@ export default function WarehousePreviewPage() {
           setViewingRackProduct(null);
           return;
         }
+        if (lockedRack || hoveredRack) {
+          setLockedRack(null);
+          setHoveredRack(null);
+          return;
+        }
+        if (displayMode) {
+          setWarehouseDisplayMode(false);
+          return;
+        }
         setLockedRack(null);
         setHoveredRack(null);
       }
     };
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [viewingRackProduct]);
+  }, [displayMode, hoveredRack, lockedRack, setWarehouseDisplayMode, viewingRackProduct]);
 
   return (
-    <div className="wh-page wp-page">
+    <div className={`wh-page wp-page${displayMode ? ' is-display' : ''}`}>
       <style>{`
+        body.warehouse-display-mode { overflow:hidden; background:#e8f0f8; }
+        body.warehouse-display-mode .sp-nav { display:none; }
+        body.warehouse-display-mode main { height:100dvh; overflow:hidden; }
         .wp-page { max-width:1440px; height:calc(100dvh - 60px); padding-top:14px; padding-bottom:14px; display:flex; flex-direction:column; overflow:hidden; }
+        .wp-display-bar { display:none; }
         .wp-hero { flex:0 0 auto; display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:end; gap:8px 16px; margin-bottom:12px; padding:2px 2px 0; color:var(--sp-text); }
         .wp-hero-content { min-width:0; }
         .wp-eyebrow { display:flex; align-items:center; gap:5px; margin-bottom:2px; color:var(--sp-orange-dark); font-size:9.5px; font-weight:800; letter-spacing:.55px; }
         .wp-title { margin:0; color:var(--sp-navy); font-size:22px; line-height:1.2; font-weight:800; letter-spacing:-.45px; }
         .wp-subtitle { display:block; margin:3px 0 0; color:var(--sp-text3); font-size:11.5px; }
-        .wp-shortcuts { display:flex; align-items:center; gap:5px; padding-bottom:3px; color:var(--sp-text3); font-size:10.5px; white-space:nowrap; }
+        .wp-shortcuts { display:flex; align-items:center; gap:7px; padding-bottom:3px; color:var(--sp-text3); font-size:10.5px; white-space:nowrap; }
         .wp-shortcuts kbd { min-width:24px; padding:3px 6px; border:1px solid var(--sp-border); border-bottom-width:2px; border-radius:6px; background:#fff; color:var(--sp-navy); font:700 9.5px 'Sarabun',sans-serif; text-align:center; }
+        .wp-display-toggle { height:32px; padding:0 11px; display:inline-flex; align-items:center; gap:6px; border:1px solid #bed3ea; border-radius:8px; background:#eef6ff; color:var(--sp-blue); font:800 10.5px 'Sarabun',sans-serif; cursor:pointer; }
+        .wp-display-toggle:hover { border-color:#7da8d5; background:#e3f0fd; }
         .wp-search-wrap { grid-column:1 / -1; position:relative; display:flex; align-items:center; gap:9px; width:100%; background:#fff; border:2px solid var(--sp-blue); border-radius:12px; padding:5px 5px 5px 13px; box-shadow:0 5px 16px rgba(36,91,158,.11); }
         .wp-search-icon { color:var(--sp-blue-md); flex:0 0 auto; }
         .wp-search-input { flex:1; min-width:0; height:36px; border:0; outline:0; color:var(--sp-text); background:transparent; font:600 14px 'Sarabun',sans-serif; }
@@ -554,8 +641,8 @@ export default function WarehousePreviewPage() {
         .wm-zoom-controls button:hover { border-color:var(--sp-blue-md); background:#fff; }
         .wm-zoom-controls .wm-reset-view { font-size:11px; }
         .wp-legend { padding:10px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; border-top:1px solid var(--sp-border); color:var(--sp-text3); font-size:10.5px; }
-        .wp-legend-items { display:flex; gap:12px; flex-wrap:wrap; }
-        .wp-legend-item { display:flex; align-items:center; gap:5px; }
+        .wp-legend-items { min-width:0; display:flex; gap:12px; flex-wrap:nowrap; overflow-x:auto; }
+        .wp-legend-item { flex:0 0 auto; display:flex; align-items:center; gap:5px; white-space:nowrap; }
         .wp-dot { width:9px; height:9px; border-radius:3px; background:var(--sp-blue-md); }
         .wp-dot.highlight { background:var(--sp-orange); box-shadow:0 0 0 2px var(--sp-gold); }
         .wp-dot.dimmed { background:#94a3b8; opacity:.45; }
@@ -575,6 +662,7 @@ export default function WarehousePreviewPage() {
         .wp-rack-sync { display:flex; align-items:center; gap:5px; margin-top:6px; color:var(--sp-text3); font-size:9px; }
         .wp-rack-sync-dot { width:6px; height:6px; border-radius:50%; background:#fbbf24; }
         .wp-rack-sync-dot.live { background:#4ade80; box-shadow:0 0 0 2px rgba(74,222,128,.18); }
+        .wp-rack-sync-dot.demo { background:#94a3b8; }
         .wp-rack-sync-dot.error { background:#fb7185; }
         .wp-rack-tools { position:sticky; top:0; z-index:2; margin:-8px -8px 8px; padding:8px; border-bottom:1px solid #dfe8f2; background:rgba(248,251,255,.97); backdrop-filter:blur(6px); }
         .wp-rack-filter-input { width:100%; height:32px; padding:0 10px; border:1px solid #cbd9e8; border-radius:8px; outline:0; background:#fff; color:var(--sp-text); font:600 11px 'Sarabun',sans-serif; }
@@ -612,11 +700,60 @@ export default function WarehousePreviewPage() {
         .wp-product-lot-meta { margin-top:5px; color:var(--sp-text3); font-size:10px; line-height:1.55; }
         .wp-product-drawer-actions { display:grid; grid-template-columns:repeat(3,1fr); gap:7px; margin-top:16px; }
         .wp-product-drawer-actions a { padding:9px 6px; border-radius:8px; background:#eaf3fd; color:var(--sp-blue); font-size:10px; font-weight:800; text-align:center; text-decoration:none; }
+        .wp-page.is-display { max-width:none; width:100%; height:100dvh; padding:12px 16px 16px; background:radial-gradient(circle at 88% 8%,rgba(226,184,74,.18),transparent 25%),linear-gradient(145deg,#edf4fb 0%,#fdfbf5 62%,#f4ead5 100%); }
+        .wp-page.is-display .wp-display-bar { min-height:58px; padding:8px 12px 8px 16px; display:flex; align-items:center; justify-content:space-between; gap:18px; flex:0 0 auto; border:1px solid rgba(102,137,176,.3); border-radius:15px; background:rgba(255,253,248,.92); box-shadow:0 8px 24px rgba(23,63,122,.1); backdrop-filter:blur(12px); }
+        .wp-display-brand { min-width:0; display:flex; align-items:center; gap:11px; }
+        .wp-display-emblem { width:40px; height:40px; display:grid; place-items:center; flex:0 0 auto; border-radius:12px; background:linear-gradient(135deg,var(--sp-blue),#4f8fd2); color:#fff; box-shadow:0 5px 14px rgba(23,63,122,.22); }
+        .wp-display-label { color:var(--sp-orange-dark); font-size:9px; font-weight:900; letter-spacing:.8px; }
+        .wp-display-title { margin:1px 0 0; color:var(--sp-navy); font-size:18px; line-height:1.15; font-weight:900; }
+        .wp-display-meta { margin-left:auto; display:flex; align-items:center; gap:13px; }
+        .wp-display-live { display:flex; align-items:center; gap:6px; padding:6px 9px; border-radius:99px; background:#e9f8ef; color:#167447; font-size:10px; font-weight:800; white-space:nowrap; }
+        .wp-display-live i { width:7px; height:7px; border-radius:50%; background:#28a86b; box-shadow:0 0 0 3px rgba(40,168,107,.14); }
+        .wp-display-clock { min-width:122px; text-align:right; color:var(--sp-navy); }
+        .wp-display-clock strong { display:block; font-size:20px; line-height:1; font-weight:900; letter-spacing:.5px; }
+        .wp-display-clock span { display:block; margin-top:4px; color:var(--sp-text3); font-size:9.5px; }
+        .wp-display-exit { height:38px; padding:0 13px; display:inline-flex; align-items:center; gap:6px; border:1px solid #dfcdbd; border-radius:9px; background:#fffaf2; color:var(--sp-orange-dark); font:800 10.5px 'Sarabun',sans-serif; cursor:pointer; }
+        .wp-page.is-display .wp-hero { grid-template-columns:1fr; margin:10px 0; padding:0; }
+        .wp-page.is-display .wp-hero-content, .wp-page.is-display .wp-shortcuts { display:none; }
+        .wp-page.is-display .wp-search-wrap { grid-column:1; width:min(920px,100%); justify-self:center; border-radius:14px; padding:6px 6px 6px 15px; box-shadow:0 8px 24px rgba(23,63,122,.14); }
+        .wp-page.is-display .wp-search-input { height:40px; font-size:15px; }
+        .wp-page.is-display .wp-layout { position:relative; display:block; flex:1; min-height:0; }
+        .wp-page.is-display .wp-map-card { width:100%; height:100%; border-radius:17px; box-shadow:0 14px 34px rgba(23,63,122,.14); }
+        .wp-page.is-display .wp-side { display:none; position:absolute; z-index:30; top:12px; bottom:12px; left:12px; width:min(360px,31vw); border-radius:13px; box-shadow:0 16px 42px rgba(9,31,63,.25); }
+        .wp-page.is-display .wp-layout.has-side .wp-side { display:flex; }
+        .wp-page.is-display .wp-location-banner { min-height:64px; padding:9px 15px; }
+        .wp-page.is-display .wp-location-title { font-size:16px; }
+        .wp-page.is-display .wp-location-detail { font-size:12px; }
+        .wp-page.is-display .wp-legend { padding:8px 14px; }
+        .wp-page.is-display .wp-edit-link { display:none; }
         @keyframes drawerIn { from { transform:translateX(30px); opacity:0; } to { transform:translateX(0); opacity:1; } }
         @media (max-width:1050px) { .wp-page { height:auto; min-height:calc(100dvh - 60px); overflow:visible; } .wp-layout { grid-template-columns:1fr; } .wp-side { min-height:0; } .wp-results { max-height:250px; } .wp-map-card { min-height:560px; } }
         @media (max-width:850px) { .wp-hero { grid-template-columns:1fr auto; } .wp-title { font-size:20px; } }
         @media (max-width:700px) { .wp-hero { grid-template-columns:1fr; gap:7px; } .wp-shortcuts { display:none; } .wp-title { font-size:18px; } .wp-subtitle { font-size:10.5px; } .wp-search-wrap { padding-left:10px; } .wp-search-status { display:none; } .wp-location-banner { align-items:flex-start; flex-direction:column; } .wp-location-badges { justify-content:flex-start; padding-left:54px; } .wp-map-warning { align-items:flex-start; flex-direction:column; } .wp-legend { align-items:flex-start; flex-direction:column; } }
+        @media (max-width:1050px) { .wp-page.is-display { height:100dvh; min-height:100dvh; overflow:hidden; } .wp-page.is-display .wp-map-card { min-height:0; } }
+        @media (max-width:700px) { .wp-page.is-display { padding:8px; } .wp-page.is-display .wp-display-bar { min-height:52px; padding:7px 9px; } .wp-display-label, .wp-display-clock span, .wp-display-live { display:none; } .wp-display-title { font-size:14px; } .wp-display-clock { min-width:auto; } .wp-display-clock strong { font-size:16px; } .wp-display-exit { width:36px; padding:0; justify-content:center; font-size:0; } .wp-page.is-display .wp-side { left:8px; right:8px; width:auto; } }
       `}</style>
+
+      <header className="wp-display-bar" aria-label="โหมดจอโกดัง">
+        <div className="wp-display-brand">
+          <div className="wp-display-emblem"><Icon size={21}><path d="M3 21V8l9-5 9 5v13"/><path d="M7 21v-8h10v8M9 10h.01M15 10h.01"/></Icon></div>
+          <div>
+            <div className="wp-display-label">WAREHOUSE DISPLAY</div>
+            <h1 className="wp-display-title">ภาพรวมตำแหน่งสินค้าในโกดัง</h1>
+          </div>
+        </div>
+        <div className="wp-display-meta">
+          <span className="wp-display-live"><i />ข้อมูลผังพร้อมใช้งาน</span>
+          <time className="wp-display-clock" dateTime={displayTime?.toISOString()}>
+            <strong>{displayTime ? displayTime.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--:--'}</strong>
+            <span>{displayTime ? displayTime.toLocaleDateString('th-TH', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : 'กำลังเตรียมเวลา...'}</span>
+          </time>
+          <button type="button" className="wp-display-exit" onClick={() => setWarehouseDisplayMode(false)}>
+            <Icon size={15}><path d="M9 18H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4M15 8l4 4-4 4M19 12H9"/></Icon>
+            ออกจากโหมดจอ
+          </button>
+        </div>
+      </header>
 
       <section className="wp-hero">
         <div className="wp-hero-content">
@@ -628,8 +765,12 @@ export default function WarehousePreviewPage() {
           <p className="wp-subtitle">พิมพ์ชื่อสินค้า รหัสสินค้า หรือตำแหน่งจัดเก็บ เพื่อชี้ตำแหน่งบนผังทันที</p>
         </div>
 
-        <div className="wp-shortcuts" aria-label="คีย์ลัดค้นหาด่วน">
-          <kbd>Ctrl</kbd><kbd>K</kbd><span>ค้นหาด่วน</span>
+        <div className="wp-shortcuts">
+          <span aria-label="คีย์ลัดค้นหาด่วน"><kbd>Ctrl</kbd> <kbd>K</kbd> ค้นหาด่วน</span>
+          <button type="button" className="wp-display-toggle" onClick={() => setWarehouseDisplayMode(true)}>
+            <Icon size={15}><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></Icon>
+            โหมดจอโกดัง
+          </button>
         </div>
 
         <div className="wp-search-wrap">
@@ -663,7 +804,7 @@ export default function WarehousePreviewPage() {
         </div>
       </section>
 
-      <div className="wp-layout">
+      <div className={`wp-layout${displaySideOpen ? ' has-side' : ''}`}>
         <aside className="wp-side">
           <div className={`wp-side-head${hoveredRack && hoveredZone ? ' wp-rack-side-head' : ''}`}>
             <div className="wp-rack-side-title-row">
@@ -715,6 +856,8 @@ export default function WarehousePreviewPage() {
                   <i className={`wp-rack-sync-dot ${rackSyncStatus}`} />
                   {rackSyncStatus === 'live'
                     ? `Supabase สด${lastRackSync ? ` · ${lastRackSync.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : ''}`
+                    : rackSyncStatus === 'demo'
+                      ? 'กำลังใช้ผังสำรอง'
                     : rackSyncStatus === 'error'
                       ? 'การซิงค์ขัดข้อง'
                       : 'กำลังเชื่อมต่อ Supabase'}
@@ -879,7 +1022,7 @@ export default function WarehousePreviewPage() {
             </div>
           )}
 
-          <WarehouseMapCanvas
+          {mapReady ? <WarehouseMapCanvas
             zones={zones}
             selectedIds={[]}
             slotCounts={rackCounts}
@@ -923,24 +1066,16 @@ export default function WarehousePreviewPage() {
               setLockedRack(nextLockedRack);
               setHoveredRack(nextLockedRack);
             }}
-          />
+          /> : <div className="wp-map-loading">กำลังโหลดข้อมูลผังคลัง...</div>}
 
           <div className="wp-legend">
             <div className="wp-legend-items">
-              {hoveredRack ? (
-                <>
-                  <span className="wp-legend-item"><i className="wp-dot highlight" />Rack ที่กำลังดู</span>
-                  <span className="wp-legend-item"><i className="wp-dot dimmed" />พื้นที่อื่น</span>
-                  <span className="wp-legend-item">ชี้เพื่อดู · คลิกเพื่อล็อก · Esc เพื่อยกเลิก</span>
-                </>
-              ) : selectedItem ? (
-                <>
-                  <span className="wp-legend-item"><i className="wp-dot highlight" />ตำแหน่งสินค้าที่เลือก</span>
-                  <span className="wp-legend-item"><i className="wp-dot dimmed" />พื้นที่อื่น</span>
-                </>
-              ) : (
-                <span className="wp-legend-item"><i className="wp-dot" />สีประจำโซน</span>
-              )}
+              <span className="wp-legend-item">
+                <i className={`wp-dot${hoveredRack || selectedItem ? ' highlight' : ''}`} />
+                {hoveredRack ? 'Rack ที่กำลังดู' : selectedItem ? 'ตำแหน่งสินค้าที่เลือก' : 'สีประจำโซน'}
+              </span>
+              <span className="wp-legend-item"><i className="wp-dot dimmed" />พื้นที่อื่นจะลดสีเมื่อเลือก</span>
+              <span className="wp-legend-item">ชี้เพื่อดู · คลิกเพื่อล็อก · Esc เพื่อยกเลิก</span>
             </div>
             <Link href="/main/warehouse-map" className="wp-edit-link"><Icon size={14}><path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10z"/></Icon>แก้ไขผังคลัง</Link>
           </div>

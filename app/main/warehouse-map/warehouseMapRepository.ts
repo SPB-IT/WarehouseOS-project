@@ -1,5 +1,6 @@
 import { supabase } from '../../../lib/supabase';
 import type { WarehouseBin, WarehouseRack, WarehouseZone } from './types';
+import { isWarehouseAisle } from './warehouseMapData';
 
 interface WarehouseZoneRow {
   id: string;
@@ -153,7 +154,7 @@ export async function fetchWarehouseZones() {
 
   // เก็บโซนรุ่นก่อนไว้ในฐานข้อมูล แต่แสดงผังอ้างอิงชุดล่าสุดเมื่อสร้างครบแล้ว
   return hasReferenceLayout
-    ? zones.filter((zone) => referenceCodes.has(zone.locationCode))
+    ? zones.filter((zone) => referenceCodes.has(zone.locationCode) || isWarehouseAisle(zone))
     : zones;
 }
 

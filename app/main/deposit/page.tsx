@@ -1,6 +1,7 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
 import { supabase } from '../../../lib/supabase';
+import { isSupabasePermissionDenied } from '../../../lib/supabaseErrors';
 import { fetchAllSupabaseRows } from '../../../lib/supabasePagination';
 import { displayItemDetail, displayStorageLocation } from '../../../lib/warehouseLocation';
 import { CldUploadWidget } from 'next-cloudinary';
@@ -17,6 +18,7 @@ import {
   getRackBins,
   getZoneRacks,
 } from '../warehouse-map/warehousePlacement';
+import WarehouseLocationPicker from './WarehouseLocationPicker';
 
 function generateTrackingId(): string {
   const ts = Date.now().toString(36).toUpperCase();
@@ -75,6 +77,7 @@ export default function DepositPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingDeposit, setEditingDeposit] = useState<DepositWithItems | null>(null);
   const [formItems, setFormItems] = useState<DepositFormItem[]>([]);
+  const [locationPickerItemId, setLocationPickerItemId] = useState<number | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
   const [editingItem, setEditingItem] = useState<DepositItem | null>(null);
@@ -127,6 +130,9 @@ export default function DepositPage() {
     return () => window.cancelAnimationFrame(frame);
   }, []);
   useEffect(() => { setPage(0); }, [searchTerm, filterStatus, sortKey]);
+  useEffect(() => {
+    if (!showForm) setLocationPickerItemId(null);
+  }, [showForm]);
 
   const fetchDeposits = async () => {
     setListLoading(true);
@@ -141,7 +147,7 @@ export default function DepositPage() {
       });
       setDeposits(data);
     } catch (error) {
-      console.error('[deposits] fetch failed:', error);
+      if (!isSupabasePermissionDenied(error)) console.error('[deposits] fetch failed:', error);
       setDeposits([]);
     }
     setListLoading(false);
@@ -158,12 +164,14 @@ export default function DepositPage() {
   const openAddForm = () => {
     setQuickPlacement(null);
     setEditingDeposit(null);
+    setLocationPickerItemId(null);
     setFormItems([createDepositFormItem()]);
     setShowForm(true);
   };
 
   const openEditDeposit = (dep: DepositWithItems) => {
     setEditingDeposit(dep);
+    setLocationPickerItemId(null);
     setFormItems([createDepositFormItem()]);
     setShowForm(true);
   };
@@ -372,6 +380,7 @@ export default function DepositPage() {
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const paginated = filtered.slice(page * pageSize, page * pageSize + pageSize);
+  const locationPickerItem = formItems.find((item) => item.id === locationPickerItemId) ?? null;
 
   return (
     <div className="wh-page">
@@ -483,15 +492,11 @@ export default function DepositPage() {
                             <label className="wh-label">ชื่อสิ่งของ {!editingDeposit && <span style={{ color: '#ef4444' }}>*</span>}</label>
                             <input name={`item_name_${item.id}`} className="wh-input" placeholder="ระบุชื่อสิ่งของ..." required={!editingDeposit} />
                           </div>
-                          <div>
-                            <label className="wh-label">รหัสสินค้า</label>
-                            <input name={`item_code_${item.id}`} className="wh-input" placeholder="เช่น SKU-001 (ถ้ามี)" />
-                          </div>
-                          <div>
-                            <label className="wh-label">ลักษณะเพิ่มเติม</label>
-                            <textarea name={`detail_${item.id}`} className="wh-textarea" placeholder="รายละเอียด / ลักษณะของสิ่งของ..." style={{ minHeight: 52 }} />
-                          </div>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.2fr) minmax(72px,.65fr) minmax(88px,.8fr)', gap: 8 }}>
+                            <div>
+                              <label className="wh-label">รหัสสินค้า</label>
+                              <input name={`item_code_${item.id}`} className="wh-input" placeholder="SKU-001" />
+                            </div>
                             <div>
                               <label className="wh-label">จำนวน {!editingDeposit && <span style={{ color: '#ef4444' }}>*</span>}</label>
                               <input name={`quantity_${item.id}`} type="number" min="1" className="wh-input" placeholder="0" required={!editingDeposit} />
@@ -501,102 +506,154 @@ export default function DepositPage() {
                               <input name={`unit_${item.id}`} className="wh-input" placeholder="เช่น ชิ้น, กล่อง" required={!editingDeposit} />
                             </div>
                           </div>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                            <div style={{ gridColumn: '1 / -1' }}>
-                              <label className="wh-label">โซนบนผังคลัง <span style={{ color: '#ef4444' }}>*</span></label>
-                              <select
-                                name={`warehouse_zone_id_${item.id}`}
-                                className="wh-select"
-                                value={item.warehouseZoneId}
-                                onChange={e => setFormItems(current => current.map(candidate => candidate.id === item.id
-                                  ? { ...candidate, warehouseZoneId: e.target.value, warehouseRackId: '', warehouseBinId: '' }
-                                  : candidate))}
-                                required={!editingDeposit}
-                                disabled={warehouseZones.length === 0}
-                              >
-                                <option value="">
-                                  {warehouseZones.length > 0 ? '— เลือกโซนจัดเก็บ —' : 'รอเชื่อมตารางผังใน Supabase'}
-                                </option>
-                                {warehouseZones.map(zone => (
-                                  <option key={zone.id} value={zone.id}>
-                                    {zone.name} · {formatZoneLocation(zone)}
+                          <button
+                            type="button"
+                            onClick={() => setLocationPickerItemId(item.id)}
+                            className="wh-btn wh-btn-gold"
+                            style={{
+                              width: '100%',
+                              justifyContent: 'center',
+                              padding: '10px 12px',
+                              gap: 8,
+                              borderRadius: 10,
+                            }}
+                          >
+                            <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" aria-hidden="true">
+                              <path d="M3 6.5 9 3l6 3.5L21 3v14.5L15 21l-6-3.5L3 21V6.5Z"/>
+                              <path d="M9 3v14.5M15 6.5V21"/>
+                            </svg>
+                            {item.warehouseZoneId && item.warehouseRackId && item.warehouseBinId
+                              ? 'เปลี่ยนตำแหน่งจากแผนผัง'
+                              : 'เลือกตำแหน่งจากแผนผัง'}
+                          </button>
+                          <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 9,
+                            minHeight: 48,
+                            padding: '8px 10px',
+                            border: `1px solid ${item.warehouseZoneId && item.warehouseRackId && item.warehouseBinId ? '#a8d8ba' : 'var(--sp-border)'}`,
+                            borderRadius: 9,
+                            background: item.warehouseZoneId && item.warehouseRackId && item.warehouseBinId ? '#edf9f2' : 'var(--sp-bg)',
+                          }}>
+                            <span style={{
+                              display: 'grid',
+                              placeItems: 'center',
+                              width: 30,
+                              height: 30,
+                              flex: '0 0 auto',
+                              borderRadius: 8,
+                              background: item.warehouseZoneId && item.warehouseRackId && item.warehouseBinId ? '#d7f0e1' : '#e8eef6',
+                              color: item.warehouseZoneId && item.warehouseRackId && item.warehouseBinId ? '#21824d' : 'var(--sp-blue-md)',
+                              fontSize: 15,
+                            }}>⌖</span>
+                            <span style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                              <small style={{ color: 'var(--sp-text3)', fontSize: 10 }}>ตำแหน่งที่จะบันทึก</small>
+                              <strong style={{ color: 'var(--sp-text2)', fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {formatWarehousePlacement(
+                                  warehouseZones.find(zone => zone.id === item.warehouseZoneId),
+                                  warehouseRacks.find(rack => rack.id === item.warehouseRackId),
+                                  warehouseBins.find(bin => bin.id === item.warehouseBinId),
+                                ) || 'ยังไม่ได้เลือกตำแหน่ง'}
+                              </strong>
+                            </span>
+                          </div>
+                          <details style={{ border: '1px solid var(--sp-border)', borderRadius: 9, background: '#fff' }}>
+                            <summary style={{ padding: '9px 11px', color: 'var(--sp-blue)', fontSize: 11.5, fontWeight: 800, cursor: 'pointer' }}>
+                              เลือกตำแหน่งจากรายการแทน
+                            </summary>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 9, padding: '2px 10px 10px' }}>
+                              <div style={{ gridColumn: '1 / -1' }}>
+                                <label className="wh-label">โซนบนผังคลัง <span style={{ color: '#ef4444' }}>*</span></label>
+                                <select
+                                  name={`warehouse_zone_id_${item.id}`}
+                                  className="wh-select"
+                                  value={item.warehouseZoneId}
+                                  onChange={e => setFormItems(current => current.map(candidate => candidate.id === item.id
+                                    ? { ...candidate, warehouseZoneId: e.target.value, warehouseRackId: '', warehouseBinId: '' }
+                                    : candidate))}
+                                  disabled={warehouseZones.length === 0}
+                                >
+                                  <option value="">
+                                    {warehouseZones.length > 0 ? '— เลือกโซนจัดเก็บ —' : 'รอเชื่อมตารางผังใน Supabase'}
                                   </option>
-                                ))}
-                              </select>
-                            </div>
-                            <div>
-                              <label className="wh-label">Rack <span style={{ color: '#ef4444' }}>*</span></label>
-                              <select
-                                name={`warehouse_rack_id_${item.id}`}
-                                className="wh-select"
-                                value={item.warehouseRackId}
-                                onChange={e => setFormItems(current => current.map(candidate => candidate.id === item.id
-                                  ? { ...candidate, warehouseRackId: e.target.value, warehouseBinId: '' }
-                                  : candidate))}
-                                required={!editingDeposit}
-                                disabled={!item.warehouseZoneId}
-                              >
-                                <option value="">— เลือก Rack —</option>
-                                {getZoneRacks(warehouseRacks, item.warehouseZoneId).map(rack => (
-                                  <option key={rack.id} value={rack.id}>Rack {rack.rackNumber}</option>
-                                ))}
-                              </select>
-                            </div>
-                            <div>
-                              <label className="wh-label">ชั้น <span style={{ color: '#ef4444' }}>*</span></label>
-                              <select
-                                name={`warehouse_bin_id_${item.id}`}
-                                className="wh-select"
-                                value={item.warehouseBinId}
-                                onChange={e => setFormItems(current => current.map(candidate => candidate.id === item.id
-                                  ? { ...candidate, warehouseBinId: e.target.value }
-                                  : candidate))}
-                                required={!editingDeposit}
-                                disabled={!item.warehouseRackId}
-                              >
-                                <option value="">— เลือกตำแหน่ง —</option>
-                                {getRackBins(warehouseBins, item.warehouseRackId).map(bin => (
-                                  <option key={bin.id} value={bin.id}>ชั้น {bin.shelfLevel}</option>
-                                ))}
-                              </select>
-                            </div>
-                          </div>
-                          <div>
-                            <label className="wh-label">พิกัดที่จะบันทึก</label>
-                            <input
-                              className="wh-input"
-                              value={formatWarehousePlacement(
-                                warehouseZones.find(zone => zone.id === item.warehouseZoneId),
-                                warehouseRacks.find(rack => rack.id === item.warehouseRackId),
-                                warehouseBins.find(bin => bin.id === item.warehouseBinId),
-                              )}
-                              placeholder="เลือกโซน, Rack และชั้นให้ครบ"
-                              readOnly
-                            />
-                          </div>
-                          <div>
-                            <label className="wh-label">รูปภาพสิ่งของ</label>
-                            {item.imageUrl && (
-                              <div style={{ marginBottom: 8, borderRadius: 8, overflow: 'hidden', border: '2px solid #bbf7d0', display: 'inline-block' }}>
-                                <img src={item.imageUrl} alt="" style={{ width: 72, height: 72, objectFit: 'cover', display: 'block' }} />
+                                  {warehouseZones.map(zone => (
+                                    <option key={zone.id} value={zone.id}>
+                                      {zone.name} · {formatZoneLocation(zone)}
+                                    </option>
+                                  ))}
+                                </select>
                               </div>
-                            )}
-                            <CldUploadWidget uploadPreset={process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET}
-                              onSuccess={(r: any) => {
-                                setFormItems(current => current.map((candidate, candidateIndex) => candidateIndex === idx
-                                  ? { ...candidate, imageUrl: r.info.secure_url }
-                                  : candidate));
-                              }}>
-                              {({ open }) => (
-                                <button type="button" onClick={() => open()} className={`wh-upload-btn${item.imageUrl ? ' uploaded' : ''}`}>
-                                  {item.imageUrl
-                                    ? <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}><svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>อัปโหลดสำเร็จ — คลิกเพื่อเปลี่ยน</span>
-                                    : <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}><svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>คลิกเพื่ออัปโหลดรูปภาพ</span>
-                                  }
-                                </button>
-                              )}
-                            </CldUploadWidget>
-                          </div>
+                              <div>
+                                <label className="wh-label">Rack <span style={{ color: '#ef4444' }}>*</span></label>
+                                <select
+                                  name={`warehouse_rack_id_${item.id}`}
+                                  className="wh-select"
+                                  value={item.warehouseRackId}
+                                  onChange={e => setFormItems(current => current.map(candidate => candidate.id === item.id
+                                    ? { ...candidate, warehouseRackId: e.target.value, warehouseBinId: '' }
+                                    : candidate))}
+                                  disabled={!item.warehouseZoneId}
+                                >
+                                  <option value="">— เลือก Rack —</option>
+                                  {getZoneRacks(warehouseRacks, item.warehouseZoneId).map(rack => (
+                                    <option key={rack.id} value={rack.id}>Rack {rack.rackNumber}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div>
+                                <label className="wh-label">ชั้น <span style={{ color: '#ef4444' }}>*</span></label>
+                                <select
+                                  name={`warehouse_bin_id_${item.id}`}
+                                  className="wh-select"
+                                  value={item.warehouseBinId}
+                                  onChange={e => setFormItems(current => current.map(candidate => candidate.id === item.id
+                                    ? { ...candidate, warehouseBinId: e.target.value }
+                                    : candidate))}
+                                  disabled={!item.warehouseRackId}
+                                >
+                                  <option value="">— เลือกตำแหน่ง —</option>
+                                  {getRackBins(warehouseBins, item.warehouseRackId).map(bin => (
+                                    <option key={bin.id} value={bin.id}>ชั้น {bin.shelfLevel}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+                          </details>
+                          <details style={{ border: '1px solid var(--sp-border)', borderRadius: 9, background: '#fff' }}>
+                            <summary style={{ padding: '9px 11px', color: 'var(--sp-text2)', fontSize: 11.5, fontWeight: 800, cursor: 'pointer' }}>
+                              รายละเอียดและรูปภาพ <span style={{ color: 'var(--sp-text3)', fontWeight: 500 }}>(ไม่บังคับ)</span>
+                            </summary>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 9, padding: '2px 10px 10px' }}>
+                              <div>
+                                <label className="wh-label">ลักษณะเพิ่มเติม</label>
+                                <textarea name={`detail_${item.id}`} className="wh-textarea" placeholder="รายละเอียด / ลักษณะของสิ่งของ..." style={{ minHeight: 52 }} />
+                              </div>
+                              <div>
+                                <label className="wh-label">รูปภาพสิ่งของ</label>
+                                {item.imageUrl && (
+                                  <div style={{ marginBottom: 8, borderRadius: 8, overflow: 'hidden', border: '2px solid #bbf7d0', display: 'inline-block' }}>
+                                    <img src={item.imageUrl} alt="" style={{ width: 72, height: 72, objectFit: 'cover', display: 'block' }} />
+                                  </div>
+                                )}
+                                <CldUploadWidget uploadPreset={process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET}
+                                  onSuccess={(r: any) => {
+                                    setFormItems(current => current.map(candidate => candidate.id === item.id
+                                      ? { ...candidate, imageUrl: r.info.secure_url }
+                                      : candidate));
+                                  }}>
+                                  {({ open }) => (
+                                    <button type="button" onClick={() => open()} className={`wh-upload-btn${item.imageUrl ? ' uploaded' : ''}`}>
+                                      {item.imageUrl
+                                        ? <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}><svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>อัปโหลดสำเร็จ — คลิกเพื่อเปลี่ยน</span>
+                                        : <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}><svg width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>คลิกเพื่ออัปโหลดรูปภาพ</span>
+                                      }
+                                    </button>
+                                  )}
+                                </CldUploadWidget>
+                              </div>
+                            </div>
+                          </details>
                         </div>
                       </div>
                     ))}
@@ -613,6 +670,32 @@ export default function DepositPage() {
             </form>
           </div>
         </div>
+      )}
+
+      {showForm && locationPickerItem && (
+        <WarehouseLocationPicker
+          open
+          zones={warehouseZones}
+          racks={warehouseRacks}
+          bins={warehouseBins}
+          initialValue={{
+            warehouseZoneId: locationPickerItem.warehouseZoneId,
+            warehouseRackId: locationPickerItem.warehouseRackId,
+            warehouseBinId: locationPickerItem.warehouseBinId,
+          }}
+          onClose={() => setLocationPickerItemId(null)}
+          onConfirm={(selection) => {
+            setFormItems((current) => current.map((item) => item.id === locationPickerItem.id
+              ? {
+                  ...item,
+                  warehouseZoneId: selection.warehouseZoneId,
+                  warehouseRackId: selection.warehouseRackId,
+                  warehouseBinId: selection.warehouseBinId,
+                }
+              : item));
+            setLocationPickerItemId(null);
+          }}
+        />
       )}
 
       {/* ── Edit Item Modal ── */}

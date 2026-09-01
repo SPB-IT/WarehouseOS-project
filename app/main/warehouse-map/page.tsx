@@ -5,10 +5,13 @@ import { ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
 import type { WarehouseZone, ZonePositionUpdate } from './types';
 import {
   applyReferenceWarehouseLayout,
+  cloneDefaultWarehouseAisles,
   cloneDefaultWarehouseZones,
+  isWarehouseAisle,
   loadWarehouseZones,
   parseWarehouseZones,
   saveWarehouseZones,
+  WAREHOUSE_AISLE_CODE_PREFIX,
   WAREHOUSE_ZONE_COLORS,
 } from './warehouseMapData';
 import {
@@ -32,6 +35,24 @@ const WarehouseMapCanvas = dynamic(() => import('./WarehouseMapCanvas'), {
 function createZoneId() {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
   return `zone-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+const HISTORY_LIMIT = 50;
+
+interface WarehouseMapSnapshot {
+  zones: WarehouseZone[];
+  rackCounts: Record<string, number>;
+}
+
+function createMapSnapshot(zones: WarehouseZone[], rackCounts: Record<string, number>): WarehouseMapSnapshot {
+  return {
+    zones: zones.map((zone) => ({ ...zone })),
+    rackCounts: { ...rackCounts },
+  };
+}
+
+function snapshotsMatch(left: WarehouseMapSnapshot, right: WarehouseMapSnapshot) {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function Icon({ children }: { children: React.ReactNode }) {
@@ -59,6 +80,8 @@ export default function WarehouseMapPage() {
   const [formRackLevels, setFormRackLevels] = useState(4);
   const [formInitialRackCount, setFormInitialRackCount] = useState(1);
   const [notice, setNotice] = useState('');
+  const [undoStack, setUndoStack] = useState<WarehouseMapSnapshot[]>([]);
+  const [redoStack, setRedoStack] = useState<WarehouseMapSnapshot[]>([]);
   const importInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -73,13 +96,38 @@ export default function WarehouseMapPage() {
           fetchWarehouseRackCounts(),
         ]);
         if (!active) return;
-        setZones(remoteZones);
+        const existingAisleCodes = new Set(
+          remoteZones.filter(isWarehouseAisle).map((zone) => zone.locationCode),
+        );
+        const missingAisles = cloneDefaultWarehouseAisles()
+          .filter((aisle) => !existingAisleCodes.has(aisle.locationCode));
+        const createdAisles: WarehouseZone[] = [];
+        for (const aisle of missingAisles) {
+          createdAisles.push(await createWarehouseZone({
+            name: aisle.name,
+            locationCode: aisle.locationCode,
+            floor: aisle.floor,
+            posX: aisle.posX,
+            posY: aisle.posY,
+            width: aisle.width,
+            height: aisle.height,
+            color: aisle.color,
+            rackLevels: 1,
+            palletsPerLevel: 1,
+          }));
+        }
+        const loadedZones = [...remoteZones, ...createdAisles];
+        setZones(loadedZones);
         setRackCounts(remoteRackCounts);
+        setUndoStack([]);
+        setRedoStack([]);
         setSyncMode('supabase');
         unsubscribe = subscribeToWarehouseZones(async () => {
           try {
             const nextZones = await fetchWarehouseZones();
-            if (active) setZones(nextZones);
+            if (active) {
+              setZones(nextZones);
+            }
           } catch {
             // รักษาผังล่าสุดไว้ หาก realtime สะดุดชั่วคราว
           }
@@ -87,7 +135,9 @@ export default function WarehouseMapPage() {
         unsubscribeRacks = subscribeToWarehouseRacks(async () => {
           try {
             const nextRackCounts = await fetchWarehouseRackCounts();
-            if (active) setRackCounts(nextRackCounts);
+            if (active) {
+              setRackCounts(nextRackCounts);
+            }
           } catch {
             // รักษาจำนวน Rack ล่าสุดไว้ หาก realtime สะดุดชั่วคราว
           }
@@ -95,6 +145,8 @@ export default function WarehouseMapPage() {
       } catch {
         if (!active) return;
         setZones(loadWarehouseZones());
+        setUndoStack([]);
+        setRedoStack([]);
         setSyncMode('browser');
         setNotice('ยังไม่พบตาราง Supabase — ใช้ข้อมูลในเบราว์เซอร์ชั่วคราว');
       } finally {
@@ -114,20 +166,43 @@ export default function WarehouseMapPage() {
   const refreshRackCounts = async () => {
     const nextCounts = await fetchWarehouseRackCounts();
     setRackCounts(nextCounts);
+    return nextCounts;
   };
 
   const selectedZone = selectedIds.length === 1
     ? zones.find((zone) => zone.id === selectedIds[0]) ?? null
     : null;
-  const selectedRackCount = selectedZone ? rackCounts[selectedZone.id] ?? 1 : 0;
+  const selectedIsAisle = Boolean(selectedZone && isWarehouseAisle(selectedZone));
+  const selectedRackCount = selectedZone && !selectedIsAisle ? rackCounts[selectedZone.id] ?? 1 : 0;
   const totalRackCount = Object.values(rackCounts).reduce((sum, count) => sum + count, 0);
+  const storageZoneCount = zones.filter((zone) => !isWarehouseAisle(zone)).length;
+  const aisleCount = zones.length - storageZoneCount;
+  const editingIsAisle = Boolean(editingZone && isWarehouseAisle(editingZone));
+
+  const commitLayout = useCallback((
+    nextZones: WarehouseZone[],
+    nextRackCounts: Record<string, number> = rackCounts,
+  ) => {
+    const currentSnapshot = createMapSnapshot(zones, rackCounts);
+    const nextSnapshot = createMapSnapshot(nextZones, nextRackCounts);
+    if (snapshotsMatch(currentSnapshot, nextSnapshot)) return;
+
+    setUndoStack((current) => [
+      ...current.slice(-(HISTORY_LIMIT - 1)),
+      currentSnapshot,
+    ]);
+    setRedoStack([]);
+    setZones(nextSnapshot.zones);
+    setRackCounts(nextSnapshot.rackCounts);
+  }, [rackCounts, zones]);
 
   const addRackToSelectedZone = async () => {
     if (!selectedZone || syncMode !== 'supabase') return;
     setRackSaving(true);
     try {
       const rack = await addWarehouseRack(selectedZone);
-      await refreshRackCounts();
+      const nextRackCounts = await refreshRackCounts();
+      commitLayout(zones, nextRackCounts);
       setNotice(`เพิ่ม Rack ${rack.rackNumber} ในช่อง ${selectedZone.locationCode} แล้ว`);
     } catch {
       setNotice('เพิ่ม Rack ไม่สำเร็จ กรุณาลองใหม่');
@@ -137,7 +212,7 @@ export default function WarehouseMapPage() {
   };
 
   const removeRackFromSelectedZone = async () => {
-    if (!selectedZone || syncMode !== 'supabase') return;
+    if (!selectedZone || selectedIsAisle || syncMode !== 'supabase') return;
     if (selectedRackCount <= 1) {
       setNotice('แต่ละโซนต้องมีอย่างน้อย 1 Rack');
       return;
@@ -147,7 +222,8 @@ export default function WarehouseMapPage() {
     setRackSaving(true);
     try {
       const rack = await removeLastWarehouseRack(selectedZone.id);
-      await refreshRackCounts();
+      const nextRackCounts = await refreshRackCounts();
+      commitLayout(zones, nextRackCounts);
       setNotice(`ลบ Rack ${rack.rackNumber} แล้ว`);
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
@@ -164,6 +240,40 @@ export default function WarehouseMapPage() {
     }
   };
 
+  const addAisle = async () => {
+    const usedNumbers = zones
+      .filter(isWarehouseAisle)
+      .map((zone) => Number(zone.locationCode.slice(WAREHOUSE_AISLE_CODE_PREFIX.length)))
+      .filter(Number.isFinite);
+    const nextNumber = Math.max(0, ...usedNumbers) + 1;
+    const draft = {
+      name: 'ทางเดิน',
+      locationCode: `${WAREHOUSE_AISLE_CODE_PREFIX}${String(nextNumber).padStart(2, '0')}`,
+      floor: 'ทางเดิน',
+      posX: 540 + ((nextNumber - 1) % 3) * 20,
+      posY: 540,
+      width: 160,
+      height: 40,
+      color: '#8aa0ba',
+      rackLevels: 1,
+      palletsPerLevel: 1,
+    };
+
+    setSaving(true);
+    try {
+      const aisle: WarehouseZone = syncMode === 'supabase'
+        ? await createWarehouseZone(draft)
+        : { id: createZoneId(), ...draft };
+      commitLayout([...zones, aisle]);
+      setSelectedIds([aisle.id]);
+      setNotice('เพิ่มทางเดินแล้ว ลากหรือย่อขยายเพื่อจัดตำแหน่งได้เลย');
+    } catch {
+      setNotice('เพิ่มทางเดินไม่สำเร็จ กรุณาลองใหม่');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   useEffect(() => {
     if (!hydrated || syncMode !== 'browser') return;
     saveWarehouseZones(zones);
@@ -175,12 +285,84 @@ export default function WarehouseMapPage() {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
+  const persistMapSnapshot = useCallback(async (
+    target: WarehouseMapSnapshot,
+    current: WarehouseMapSnapshot,
+  ) => {
+    if (syncMode !== 'supabase') return;
+
+    if (target.zones.length > 0) await upsertWarehouseZones(target.zones);
+
+    const liveRackCounts = await fetchWarehouseRackCounts();
+    for (const zone of target.zones) {
+      if (isWarehouseAisle(zone)) continue;
+      const desiredCount = Math.max(1, target.rackCounts[zone.id] ?? 1);
+      let liveCount = liveRackCounts[zone.id] ?? 0;
+      while (liveCount < desiredCount) {
+        await addWarehouseRack(zone);
+        liveCount += 1;
+      }
+      while (liveCount > desiredCount) {
+        await removeLastWarehouseRack(zone.id);
+        liveCount -= 1;
+      }
+    }
+
+    const targetIds = new Set(target.zones.map((zone) => zone.id));
+    const removedZones = current.zones.filter((zone) => !targetIds.has(zone.id));
+    await Promise.all(removedZones.map((zone) => deleteWarehouseZone(zone.id)));
+  }, [syncMode]);
+
+  const undoLayout = useCallback(async () => {
+    const target = undoStack.at(-1);
+    if (!target || saving || rackSaving) return;
+    const current = createMapSnapshot(zones, rackCounts);
+
+    setSaving(true);
+    try {
+      await persistMapSnapshot(target, current);
+      setZones(target.zones.map((zone) => ({ ...zone })));
+      setRackCounts({ ...target.rackCounts });
+      setSelectedIds((ids) => ids.filter((id) => target.zones.some((zone) => zone.id === id)));
+      setUndoStack((stack) => stack.slice(0, -1));
+      setRedoStack((stack) => [...stack.slice(-(HISTORY_LIMIT - 1)), current]);
+      setNotice('ย้อนกลับการแก้ผังแล้ว');
+    } catch {
+      setNotice('ย้อนกลับไม่สำเร็จ เนื่องจากข้อมูลในคลังเปลี่ยนไปแล้ว');
+    } finally {
+      setSaving(false);
+    }
+  }, [persistMapSnapshot, rackCounts, rackSaving, saving, undoStack, zones]);
+
+  const redoLayout = useCallback(async () => {
+    const target = redoStack.at(-1);
+    if (!target || saving || rackSaving) return;
+    const current = createMapSnapshot(zones, rackCounts);
+
+    setSaving(true);
+    try {
+      await persistMapSnapshot(target, current);
+      setZones(target.zones.map((zone) => ({ ...zone })));
+      setRackCounts({ ...target.rackCounts });
+      setSelectedIds((ids) => ids.filter((id) => target.zones.some((zone) => zone.id === id)));
+      setRedoStack((stack) => stack.slice(0, -1));
+      setUndoStack((stack) => [...stack.slice(-(HISTORY_LIMIT - 1)), current]);
+      setNotice('ทำซ้ำการแก้ผังแล้ว');
+    } catch {
+      setNotice('ทำซ้ำไม่สำเร็จ เนื่องจากข้อมูลในคลังเปลี่ยนไปแล้ว');
+    } finally {
+      setSaving(false);
+    }
+  }, [persistMapSnapshot, rackCounts, rackSaving, redoStack, saving, zones]);
+
   const deleteSelected = useCallback(async () => {
     if (selectedIds.length === 0) return;
+    const selectedAreas = zones.filter((zone) => selectedIds.includes(zone.id));
+    const deletingOnlyAisles = selectedAreas.every(isWarehouseAisle);
     const message =
       selectedIds.length === 1
-        ? 'ลบโซนที่เลือกออกจากผังหรือไม่?'
-        : `ลบ ${selectedIds.length} โซนที่เลือกออกจากผังหรือไม่?`;
+        ? deletingOnlyAisles ? 'ลบทางเดินที่เลือกออกจากผังหรือไม่?' : 'ลบโซนที่เลือกออกจากผังหรือไม่?'
+        : `ลบพื้นที่ที่เลือก ${selectedIds.length} รายการออกจากผังหรือไม่?`;
     if (!window.confirm(message)) return;
 
     setSaving(true);
@@ -188,9 +370,13 @@ export default function WarehouseMapPage() {
       if (syncMode === 'supabase') {
         await Promise.all(selectedIds.map((id) => deleteWarehouseZone(id)));
       }
-      setZones((current) => current.filter((zone) => !selectedIds.includes(zone.id)));
+      const nextZones = zones.filter((zone) => !selectedIds.includes(zone.id));
+      const nextRackCounts = Object.fromEntries(
+        Object.entries(rackCounts).filter(([zoneId]) => !selectedIds.includes(zoneId)),
+      );
+      commitLayout(nextZones, nextRackCounts);
       setSelectedIds([]);
-      setNotice('ลบโซนออกจากผังแล้ว');
+      setNotice(deletingOnlyAisles ? 'ลบทางเดินออกจากผังแล้ว' : 'ลบพื้นที่ออกจากผังแล้ว');
     } catch (error) {
       const message = error instanceof Error ? error.message : '';
       if (message.startsWith('ZONE_NOT_EMPTY:')) {
@@ -202,7 +388,7 @@ export default function WarehouseMapPage() {
     } finally {
       setSaving(false);
     }
-  }, [selectedIds, syncMode]);
+  }, [commitLayout, rackCounts, selectedIds, syncMode, zones]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -210,10 +396,20 @@ export default function WarehouseMapPage() {
       const target = event.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
 
-      if ((event.key === 'Delete' || event.key === 'Backspace') && selectedIds.length > 0) {
+      const key = event.key.toLowerCase();
+      const modifier = event.ctrlKey || event.metaKey;
+
+      if (modifier && key === 'z') {
+        event.preventDefault();
+        if (event.shiftKey) void redoLayout();
+        else void undoLayout();
+      } else if (modifier && key === 'y') {
+        event.preventDefault();
+        void redoLayout();
+      } else if ((event.key === 'Delete' || event.key === 'Backspace') && selectedIds.length > 0) {
         event.preventDefault();
         void deleteSelected();
-      } else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+      } else if (modifier && key === 'a') {
         event.preventDefault();
         setSelectedIds(zones.map((zone) => zone.id));
       } else if (event.key === 'Escape') {
@@ -223,7 +419,7 @@ export default function WarehouseMapPage() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [deleteSelected, modalOpen, selectedIds.length, zones]);
+  }, [deleteSelected, modalOpen, redoLayout, selectedIds.length, undoLayout, zones]);
 
   const openCreateModal = () => {
     setEditingZone(null);
@@ -268,10 +464,10 @@ export default function WarehouseMapPage() {
       if (editingZone) {
         const patch = { name, locationCode, floor, color: formColor, rackLevels, palletsPerLevel };
         if (syncMode === 'supabase') await updateWarehouseZone(editingZone.id, patch);
-        setZones((current) =>
-          current.map((zone) => zone.id === editingZone.id ? { ...zone, ...patch } : zone),
+        commitLayout(
+          zones.map((zone) => zone.id === editingZone.id ? { ...zone, ...patch } : zone),
         );
-        setNotice('อัปเดตโซนและซิงก์แล้ว');
+        setNotice(editingIsAisle ? 'อัปเดตทางเดินและซิงก์แล้ว' : 'อัปเดตโซนและซิงก์แล้ว');
       } else {
         const offset = (zones.length % 8) * 20;
         const draft = {
@@ -290,15 +486,16 @@ export default function WarehouseMapPage() {
           ? await createWarehouseZone(draft)
           : { id: createZoneId(), ...draft };
         const zone = { ...createdZone, rackLevels, palletsPerLevel };
+        let nextRackCounts = rackCounts;
         if (syncMode === 'supabase') {
           for (let index = 0; index < initialRackCount; index += 1) {
             await addWarehouseRack(zone);
           }
-          await refreshRackCounts();
+          nextRackCounts = await refreshRackCounts();
         } else {
-          setRackCounts((current) => ({ ...current, [zone.id]: initialRackCount }));
+          nextRackCounts = { ...rackCounts, [zone.id]: initialRackCount };
         }
-        setZones((current) => [...current, zone]);
+        commitLayout([...zones, zone], nextRackCounts);
         setSelectedIds([zone.id]);
         setNotice(`เพิ่มโซนพร้อม ${initialRackCount} Rack · ${rackLevels} ชั้นแล้ว`);
       }
@@ -311,8 +508,8 @@ export default function WarehouseMapPage() {
   };
 
   const updateZonePosition = (id: string, posX: number, posY: number) => {
-    setZones((current) =>
-      current.map((zone) => (zone.id === id ? { ...zone, posX, posY } : zone)),
+    commitLayout(
+      zones.map((zone) => (zone.id === id ? { ...zone, posX, posY } : zone)),
     );
     if (syncMode === 'supabase') {
       setSaving(true);
@@ -324,8 +521,8 @@ export default function WarehouseMapPage() {
 
   const updateZonesBulk = (updates: ZonePositionUpdate[]) => {
     const updatesById = new Map(updates.map((update) => [update.id, update]));
-    setZones((current) =>
-      current.map((zone) => {
+    commitLayout(
+      zones.map((zone) => {
         const update = updatesById.get(zone.id);
         return update ? { ...zone, posX: update.posX, posY: update.posY } : zone;
       }),
@@ -345,8 +542,8 @@ export default function WarehouseMapPage() {
     width: number,
     height: number,
   ) => {
-    setZones((current) =>
-      current.map((zone) =>
+    commitLayout(
+      zones.map((zone) =>
         zone.id === id ? { ...zone, posX, posY, width, height } : zone,
       ),
     );
@@ -384,8 +581,16 @@ export default function WarehouseMapPage() {
         throw new Error('Invalid warehouse layout');
       }
 
-      if (syncMode === 'supabase') await upsertWarehouseZones(importedZones);
-      setZones(importedZones);
+      let nextRackCounts = Object.fromEntries(
+        importedZones
+          .filter((zone) => !isWarehouseAisle(zone))
+          .map((zone) => [zone.id, rackCounts[zone.id] ?? 1]),
+      );
+      if (syncMode === 'supabase') {
+        await upsertWarehouseZones(importedZones);
+        nextRackCounts = await refreshRackCounts();
+      }
+      commitLayout(importedZones, nextRackCounts);
       setSelectedIds([]);
       setNotice('นำเข้าไฟล์ผังสำเร็จ');
     } catch {
@@ -399,7 +604,13 @@ export default function WarehouseMapPage() {
       return;
     }
     if (!window.confirm('แทนที่ผังปัจจุบันด้วยผังตัวอย่างหรือไม่?')) return;
-    setZones(cloneDefaultWarehouseZones());
+    const nextZones = cloneDefaultWarehouseZones();
+    const nextRackCounts = Object.fromEntries(
+      nextZones
+        .filter((zone) => !isWarehouseAisle(zone))
+        .map((zone) => [zone.id, rackCounts[zone.id] ?? 1]),
+    );
+    commitLayout(nextZones, nextRackCounts);
     setSelectedIds([]);
     setNotice('คืนค่าผังตัวอย่างแล้ว');
   };
@@ -426,7 +637,7 @@ export default function WarehouseMapPage() {
           height: zone.height,
         })));
       }
-      setZones(nextZones);
+      commitLayout(nextZones);
       setSelectedIds([]);
       setNotice('จัดผังตามแปลนคลังแล้ว');
     } catch {
@@ -465,6 +676,11 @@ export default function WarehouseMapPage() {
         .wm-map-toolbar { min-height:50px; padding:9px 12px; display:flex; align-items:center; justify-content:space-between; gap:10px; border-bottom:1px solid var(--sp-border); background:linear-gradient(90deg,#f9fbfe,#eef4fb); }
         .wm-map-toolbar-left { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
         .wm-selection-pill { background:#deeafa; color:var(--sp-blue); border:1px solid #b9d2ef; border-radius:99px; padding:5px 10px; font-size:11.5px; font-weight:800; }
+        .wm-history-controls { display:flex; align-items:center; gap:4px; padding-left:4px; }
+        .wm-history-button { min-width:34px; height:30px; padding:0 8px; display:inline-flex; align-items:center; justify-content:center; gap:4px; border:1px solid var(--sp-border); border-radius:7px; background:#fff; color:var(--sp-blue); font:700 10.5px 'Sarabun',sans-serif; cursor:pointer; }
+        .wm-history-button:hover:not(:disabled) { border-color:var(--sp-blue-md); background:#eef5fd; }
+        .wm-history-button:disabled { opacity:.38; cursor:not-allowed; }
+        .wm-history-arrow { font-size:16px; line-height:1; }
         .wm-rack-control { display:flex; align-items:center; gap:5px; padding:3px 5px 3px 9px; border:1px solid #bfd2e7; border-radius:9px; background:#fff; color:var(--sp-navy); font-size:11px; font-weight:800; }
         .wm-rack-control button { width:27px; height:27px; padding:0; border:1px solid var(--sp-border); border-radius:7px; background:#f7faff; color:var(--sp-blue); font:800 16px 'Sarabun',sans-serif; cursor:pointer; }
         .wm-rack-control button:hover:not(:disabled) { border-color:var(--sp-blue-md); background:#eef5fd; }
@@ -528,18 +744,23 @@ export default function WarehouseMapPage() {
             <Icon><path d="M12 5v14M5 12h14"/></Icon>
             เพิ่มโซน
           </button>
+          <button type="button" className="wh-btn wh-btn-ghost" onClick={() => void addAisle()} disabled={!hydrated || saving}>
+            <Icon><path d="M4 7h16M4 17h16"/><path d="M12 4v6m-3-3h6"/></Icon>
+            เพิ่มทางเดิน
+          </button>
         </div>
       </div>
 
       <section className="wm-summary" aria-label="สรุปผังคลัง">
         <div className="wm-summary-card">
-          <span className="wm-summary-label">จำนวนโซนทั้งหมด</span>
-          <span className="wm-summary-value">{zones.length}</span>
+          <span className="wm-summary-label">โซนจัดเก็บ</span>
+          <span className="wm-summary-value">{storageZoneCount}</span>
+          <span className="wm-summary-note"> · ทางเดิน {aisleCount}</span>
         </div>
         <div className="wm-summary-card">
           <span className="wm-summary-label">กำลังเลือก</span>
           <span className="wm-summary-value">{selectedIds.length}</span>
-          <span className="wm-summary-note"> โซน</span>
+          <span className="wm-summary-note"> พื้นที่</span>
         </div>
         <div className="wm-summary-card">
           <span className="wm-summary-label">จำนวน Rack ทั้งหมด</span>
@@ -559,7 +780,7 @@ export default function WarehouseMapPage() {
       <div className="wm-workspace">
         <aside className="wm-sidebar">
           <div className="wm-sidebar-head">
-            <h2 className="wm-sidebar-title">รายการโซน</h2>
+            <h2 className="wm-sidebar-title">รายการพื้นที่</h2>
             <button type="button" className="wh-btn wh-btn-ghost" onClick={resetToSample} style={{ padding: '5px 9px', fontSize: 11 }}>
               ผังตัวอย่าง
             </button>
@@ -590,7 +811,9 @@ export default function WarehouseMapPage() {
                   <span className="wm-zone-copy">
                     <span className="wm-zone-name">{zone.name}</span>
                     <span className="wm-zone-size">
-                      {zone.locationCode} · {rackCounts[zone.id] ?? 0} Rack · {zone.rackLevels ?? 4} ชั้น
+                      {isWarehouseAisle(zone)
+                        ? 'พื้นที่ทางเดิน'
+                        : `${zone.locationCode} · ${rackCounts[zone.id] ?? 0} Rack · ${zone.rackLevels ?? 4} ชั้น`}
                     </span>
                   </span>
                 </button>
@@ -603,15 +826,37 @@ export default function WarehouseMapPage() {
           <div className="wm-map-toolbar">
             <div className="wm-map-toolbar-left">
               <span className="wm-selection-pill">
-                {selectedIds.length > 0 ? `เลือกแล้ว ${selectedIds.length} โซน` : 'ยังไม่ได้เลือกโซน'}
+                {selectedIds.length > 0 ? `เลือกแล้ว ${selectedIds.length} พื้นที่` : 'ยังไม่ได้เลือกพื้นที่'}
               </span>
+              <div className="wm-history-controls" aria-label="ประวัติการแก้ผัง">
+                <button
+                  type="button"
+                  className="wm-history-button"
+                  onClick={() => void undoLayout()}
+                  disabled={!hydrated || saving || rackSaving || undoStack.length === 0}
+                  title="ย้อนกลับ (Ctrl+Z)"
+                  aria-keyshortcuts="Control+Z Meta+Z"
+                >
+                  <span className="wm-history-arrow" aria-hidden="true">↶</span>ย้อนกลับ
+                </button>
+                <button
+                  type="button"
+                  className="wm-history-button"
+                  onClick={() => void redoLayout()}
+                  disabled={!hydrated || saving || rackSaving || redoStack.length === 0}
+                  title="ทำซ้ำ (Ctrl+Y หรือ Ctrl+Shift+Z)"
+                  aria-keyshortcuts="Control+Y Control+Shift+Z Meta+Shift+Z"
+                >
+                  <span className="wm-history-arrow" aria-hidden="true">↷</span>ทำซ้ำ
+                </button>
+              </div>
               {selectedIds.length === 1 && (
                 <button type="button" className="wh-btn wh-btn-ghost" onClick={() => openEditModal(selectedIds[0])}>
                   <Icon><path d="m4 20 4.5-1 10-10a2.1 2.1 0 0 0-3-3l-10 10z"/><path d="m14 7 3 3"/></Icon>
                   แก้ไข
                 </button>
               )}
-              {selectedZone && (
+              {selectedZone && !selectedIsAisle && (
                 <div className="wm-rack-control" title="เพิ่มหรือลด Rack ในโซนที่เลือก">
                   <span>Rack {selectedRackCount}</span>
                   <button
@@ -670,7 +915,8 @@ export default function WarehouseMapPage() {
         <span>
           <strong>วิธีใช้:</strong> คลิกและลากโซนเพื่อย้าย · ดับเบิลคลิกเพื่อแก้ไข · Shift+คลิกหรือลากครอบเพื่อเลือกหลายโซน · ลูกกลิ้งเมาส์ใช้ซูม
           <br />
-          เลือก 1 โซนแล้วใช้ปุ่ม − / + เพื่อปรับจำนวน Rack (ระบบจะไม่ยอมลบ Rack ที่มีสินค้า) · คีย์ลัด: Delete = ลบ · Ctrl+A = เลือกทั้งหมด · Esc = ยกเลิกการเลือก
+          ปุ่ม “เพิ่มทางเดิน” จะสร้างพื้นที่ที่ลาก ย่อขยาย แก้ชื่อ และลบได้เหมือนพื้นที่อื่น · เลือก 1 โซนแล้วใช้ปุ่ม − / + เพื่อปรับจำนวน Rack (ระบบจะไม่ยอมลบ Rack ที่มีสินค้า)
+          <br />คีย์ลัด: Ctrl+Z = ย้อนกลับ · Ctrl+Y / Ctrl+Shift+Z = ทำซ้ำ · Delete = ลบ · Ctrl+A = เลือกทั้งหมด · Esc = ยกเลิกการเลือก
         </span>
       </p>
 
@@ -678,24 +924,24 @@ export default function WarehouseMapPage() {
         <div className="wh-modal-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) closeModal(); }}>
           <div className="wh-modal" role="dialog" aria-modal="true" aria-labelledby="wm-modal-title">
             <div className="wh-modal-title" id="wm-modal-title">
-              {editingZone ? 'แก้ไขโซน' : 'เพิ่มโซนใหม่'}
+              {editingIsAisle ? 'แก้ไขทางเดิน' : editingZone ? 'แก้ไขโซน' : 'เพิ่มโซนใหม่'}
               <button type="button" className="wh-modal-close" onClick={closeModal} aria-label="ปิด">×</button>
             </div>
 
             <div className="wm-modal-field">
-              <label className="wh-label" htmlFor="wm-zone-name">ชื่อโซน</label>
+              <label className="wh-label" htmlFor="wm-zone-name">{editingIsAisle ? 'ชื่อทางเดิน' : 'ชื่อโซน'}</label>
               <input
                 id="wm-zone-name"
                 className="wh-input"
                 value={formName}
                 onChange={(event) => setFormName(event.target.value)}
                 onKeyDown={(event) => { if (event.key === 'Enter') saveZone(); }}
-                placeholder="เช่น โซน A, จุดรับเข้า"
+                placeholder={editingIsAisle ? 'เช่น ทางเดินฝั่งซ้าย' : 'เช่น โซน A, จุดรับเข้า'}
                 autoFocus
               />
             </div>
 
-            <div className="wm-location-fields">
+            {!editingIsAisle && <div className="wm-location-fields">
               <div className="wm-modal-field">
                 <label className="wh-label" htmlFor="wm-location-code">รหัสตำแหน่ง</label>
                 <input
@@ -716,9 +962,9 @@ export default function WarehouseMapPage() {
                   placeholder="เช่น 4 ชั้น, แนวผนัง, ฝั่งซ้าย"
                 />
               </div>
-            </div>
+            </div>}
 
-            <div className="wm-storage-config">
+            {!editingIsAisle && <div className="wm-storage-config">
               <div className="wm-modal-field">
                 <label className="wh-label" htmlFor="wm-rack-levels">จำนวนชั้น / Rack</label>
                 <input
@@ -748,10 +994,10 @@ export default function WarehouseMapPage() {
                 รวม {formRackLevels} ตำแหน่งต่อ Rack (ชั้นละ 1 ตำแหน่ง)
                 {editingZone ? ' · การแก้จำนวนชั้นมีผลกับ Rack ที่เพิ่มใหม่ ส่วน Rack เดิมและสินค้าจะไม่ถูกลบ' : ''}
               </div>
-            </div>
+            </div>}
 
             <div className="wm-modal-field">
-              <span className="wh-label">สีประจำโซน</span>
+              <span className="wh-label">{editingIsAisle ? 'สีเส้นทางเดิน' : 'สีประจำโซน'}</span>
               <div className="wm-color-list">
                 {WAREHOUSE_ZONE_COLORS.map((color) => (
                   <button
@@ -781,7 +1027,7 @@ export default function WarehouseMapPage() {
                 onClick={() => void saveZone()}
                 disabled={saving || !formName.trim() || !formLocationCode.trim() || !formFloor.trim()}
               >
-                {saving ? 'กำลังบันทึก...' : 'บันทึกโซน'}
+                {saving ? 'กำลังบันทึก...' : editingIsAisle ? 'บันทึกทางเดิน' : 'บันทึกโซน'}
               </button>
             </div>
           </div>
