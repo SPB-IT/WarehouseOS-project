@@ -227,13 +227,14 @@ export default function BackupPage() {
             </div>
           </article>
 
+          {/* NAS jobs run on the main Windows PC; this page does not read their live status. */}
           <article className="backup-card backup-local">
-            <div className="backup-card-head"><span className="backup-icon"><Icon name="file"/></span><div><h2>ไฟล์สำรองอัตโนมัติในเครื่องหลัก</h2><p>Windows สร้างไฟล์จริงให้ทุกวันโดยไม่ต้องเปิดหน้าเว็บ และเก็บย้อนหลัง 7 วัน</p></div></div>
+            <div className="backup-card-head"><span className="backup-icon"><Icon name="file"/></span><div><h2>ไฟล์สำรองอัตโนมัติไป NAS</h2><p>เครื่องหลักส่งไฟล์ไป NAS ทุกวันเมื่อ Windows ลงชื่อเข้าใช้และเชื่อมต่อ NAS ได้ เก็บ 7 ไฟล์รายวันล่าสุด</p></div></div>
             <div className="backup-card-body local-layout">
-              <div className="local-path"><Icon name="shield" size={21}/><div><strong>เปิดใช้งานแล้ว</strong><code>C:\Users\Nexok\WarehouseOS-Backups</code></div></div>
+              <div className="local-path"><Icon name="shield" size={21}/><div><strong>ปลายทางที่ตั้งค่าไว้</strong><code>Y:\BackUp_WareHouse\Sampeng</code></div></div>
               <div className="local-detail"><div><strong>20:00 น.</strong><span>สำรองทุกวัน</span></div></div>
-              <div className="local-detail"><div><strong>7 ไฟล์</strong><span>ย้อนหลังสูงสุด</span></div></div>
-              <div className="local-detail"><div><strong>เปิดเครื่องครั้งถัดไป</strong><span>ทำงานชดเชยหากพลาดเวลา</span></div></div>
+              <div className="local-detail"><div><strong>7 ไฟล์รายวัน</strong><span>ต่อโปรเจค</span></div></div>
+              <div className="local-detail"><div><strong>ต้องเชื่อมต่อ NAS</strong><span>ลองซ้ำ 3 ครั้ง ห่างกัน 15 นาที</span></div></div>
             </div>
           </article>
 

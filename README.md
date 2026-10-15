@@ -40,3 +40,9 @@ npm run check
 ```bash
 node --env-file=.env.local scripts/audit-placement-sync.mjs
 ```
+
+## NAS backups
+
+Daily at 20:00 Asia/Bangkok from the main Windows PC, while signed in and connected to the NAS. Destination: `Y:\BackUp_WareHouse\Sampeng` (configured using UNC in backup.config.json). Run `npm run backup:install` on the main PC to install/update the task. The task retries three times at 15-minute intervals. Seven latest daily files are retained separately per project. Existing local backups are not moved or deleted.
+
+Manual run: `npm run backup:local`. Local task logs: `.backup-logs/latest.log`; verified result: `.backup-logs/status.json`. The website shows the configured destination, not the task's live status. Browser snapshots and download buttons still work independently.

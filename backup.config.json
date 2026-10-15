@@ -1,0 +1,8 @@
+{
+  "project": "Sampeng",
+  "expectedProjectRef": "qkyufoychvebfcjuelrg",
+  "backupDirectory": "\\\\Spb-nas\\แผนก it\\BackUp_WareHouse\\Sampeng",
+  "displayDirectory": "Y:\\BackUp_WareHouse\\Sampeng",
+  "taskName": "WarehouseOS Daily Local Backup",
+  "dailyAt": "20:00"
+}

@@ -1,5 +1,4 @@
-import { copyFile, mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
+import { access, mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createClient } from '@supabase/supabase-js';
@@ -21,6 +20,12 @@ const TABLES = [
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const projectDirectory = resolve(scriptDirectory, '..');
+const config = JSON.parse(await readFile(join(projectDirectory, 'backup.config.json'), 'utf8'));
+const statusDirectory = join(projectDirectory, '.backup-logs');
+async function recordStatus(status) {
+  await mkdir(statusDirectory, { recursive: true });
+  await writeFile(join(statusDirectory, 'status.json'), JSON.stringify({ project: config.project, checkedAt: new Date().toISOString(), ...status }, null, 2));
+}
 
 function parseEnvFile(content) {
   const values = {};
@@ -40,16 +45,13 @@ function parseEnvFile(content) {
 }
 
 function localDateStamp(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 }
 
 async function fetchAllRows(supabase, table) {
   const rows = [];
   for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await supabase.from(table).select('*').range(from, from + PAGE_SIZE - 1);
+    const { data, error } = await supabase.from(table).select('*').order('id', { ascending: true }).range(from, from + PAGE_SIZE - 1);
     if (error) throw new Error(`${table}: ${error.message}`);
     const page = data ?? [];
     rows.push(...page);
@@ -72,19 +74,18 @@ async function main() {
   const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || envFile.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!supabaseUrl || !supabaseKey) throw new Error('ไม่พบ NEXT_PUBLIC_SUPABASE_URL หรือ NEXT_PUBLIC_SUPABASE_ANON_KEY ใน .env.local');
 
+  if (new URL(supabaseUrl).hostname !== config.expectedProjectRef + '.supabase.co') {
+    throw new Error('Backup refused: database does not match ' + config.project);
+  }
+  const backupDirectory = config.backupDirectory;
+  // Require the configured NAS parent to exist; never silently fall back to local disk.
+  await access(dirname(backupDirectory));
+  await mkdir(backupDirectory, { recursive: true });
   const supabase = createClient(supabaseUrl, supabaseKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
   const warnings = [];
-  const entries = await Promise.all(TABLES.map(async (table) => {
-    try {
-      return [table, await fetchAllRows(supabase, table)];
-    } catch (error) {
-      if (table !== 'warehouse_location_movements') throw error;
-      warnings.push(error instanceof Error ? error.message : 'อ่านประวัติย้ายตำแหน่งไม่สำเร็จ');
-      return [table, []];
-    }
-  }));
+  const entries = await Promise.all(TABLES.map(async (table) => [table, await fetchAllRows(supabase, table)]));
 
   const createdAt = new Date().toISOString();
   const backup = {
@@ -92,26 +93,29 @@ async function main() {
     version: BACKUP_VERSION,
     createdAt,
     source: 'automatic',
+    project: config.project,
+    projectRef: config.expectedProjectRef,
     tables: Object.fromEntries(entries),
     warnings,
   };
-  const backupDirectory = process.env.WAREHOUSE_BACKUP_DIR || join(homedir(), 'WarehouseOS-Backups');
-  await mkdir(backupDirectory, { recursive: true });
   const fileName = `warehouseos-backup-${localDateStamp()}.json`;
   const outputPath = join(backupDirectory, fileName);
   const temporaryPath = join(backupDirectory, `.${fileName}.${process.pid}.tmp`);
   await writeFile(temporaryPath, JSON.stringify(backup, null, 2), 'utf8');
-  await copyFile(temporaryPath, outputPath);
-  await unlink(temporaryPath);
+  const verified = JSON.parse(await readFile(temporaryPath, 'utf8'));
+  if (verified.projectRef !== config.expectedProjectRef || TABLES.some(table => !Array.isArray(verified.tables[table]))) throw new Error('Backup verification failed');
+  await rename(temporaryPath, outputPath);
   const deletedFiles = await pruneOldBackups(backupDirectory);
   const rowCount = entries.reduce((total, [, rows]) => total + rows.length, 0);
 
+  await recordStatus({ success: true, outputPath, rowCount, createdAt, warnings });
   console.log(`WarehouseOS backup completed: ${outputPath}`);
   console.log(`Rows: ${rowCount} | Retained: ${RETENTION_DAYS} days | Removed: ${deletedFiles}`);
   if (warnings.length > 0) console.warn(`Warnings: ${warnings.join(' | ')}`);
 }
 
-main().catch((error) => {
+main().catch(async (error) => {
+  await recordStatus({ success: false, error: error instanceof Error ? error.message : String(error) }).catch(() => undefined);
   console.error(error instanceof Error ? error.message : error);
   process.exitCode = 1;
 });

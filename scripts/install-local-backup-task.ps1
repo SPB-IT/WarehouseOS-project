@@ -1,50 +1,19 @@
-[CmdletBinding()]
-param(
-  [string]$TaskName = 'WarehouseOS Daily Local Backup',
-  [string]$DailyAt = '20:00'
-)
-
+﻿[CmdletBinding()]
+param([string]$TaskName = '', [string]$DailyAt = '')
 $ErrorActionPreference = 'Stop'
 $projectDirectory = Split-Path -Parent $PSScriptRoot
-$backupScript = Join-Path $PSScriptRoot 'backup-local.mjs'
-$envFile = Join-Path $projectDirectory '.env.local'
-$nodeCommand = Get-Command node.exe -ErrorAction Stop
-
-if (-not (Test-Path -LiteralPath $backupScript -PathType Leaf)) {
-  throw "Backup script not found: $backupScript"
-}
-if (-not (Test-Path -LiteralPath $envFile -PathType Leaf)) {
-  throw "Supabase settings not found: $envFile"
-}
-
-$scheduledTime = [DateTime]::ParseExact(
-  $DailyAt,
-  'HH:mm',
-  [Globalization.CultureInfo]::InvariantCulture
-)
-$action = New-ScheduledTaskAction `
-  -Execute $nodeCommand.Source `
-  -Argument "`"$backupScript`"" `
-  -WorkingDirectory $projectDirectory
+$config = Get-Content -LiteralPath (Join-Path $projectDirectory 'backup.config.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+if (-not $TaskName) { $TaskName = $config.taskName }
+if (-not $DailyAt) { $DailyAt = $config.dailyAt }
+$runner = Join-Path $PSScriptRoot 'run-backup.ps1'
+if (-not (Test-Path -LiteralPath (Join-Path $projectDirectory '.env.local'))) { throw 'Missing .env.local' }
+if (-not (Test-Path -LiteralPath (Split-Path -Parent $config.backupDirectory))) { throw 'NAS is not accessible' }
+$scheduledTime = [DateTime]::ParseExact($DailyAt, 'HH:mm', [Globalization.CultureInfo]::InvariantCulture)
+$powershellExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$action = New-ScheduledTaskAction -Execute $powershellExe -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$runner`"" -WorkingDirectory $projectDirectory
 $trigger = New-ScheduledTaskTrigger -Daily -At $scheduledTime
-$settings = New-ScheduledTaskSettingsSet `
-  -StartWhenAvailable `
-  -AllowStartIfOnBatteries `
-  -DontStopIfGoingOnBatteries `
-  -MultipleInstances IgnoreNew `
-  -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
-
-Register-ScheduledTask `
-  -TaskName $TaskName `
-  -Action $action `
-  -Trigger $trigger `
-  -Settings $settings `
-  -Description 'Back up WarehouseOS to a local JSON file and retain the latest seven daily files.' `
-  -Force | Out-Null
-
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 15)
+$principal = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description "Back up $($config.project) to NAS daily; retain seven daily files. Requires Windows sign-in and NAS connectivity." -Force | Out-Null
 Start-ScheduledTask -TaskName $TaskName
-
-$backupDirectory = Join-Path $env:USERPROFILE 'WarehouseOS-Backups'
-Write-Host "Installed scheduled task: $TaskName"
-Write-Host "Daily time: $DailyAt (a missed run starts when Windows is next available)"
-Write-Host "Backup folder: $backupDirectory"
+Write-Output "Installed: $TaskName | Daily: $DailyAt | Destination: $($config.backupDirectory)"
